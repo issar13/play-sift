@@ -1,0 +1,198 @@
+package app.playsift.ui
+
+import android.Manifest
+import android.app.Activity
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import app.playsift.R
+import app.playsift.files.trashRequest
+import app.playsift.player.AccessState
+import app.playsift.player.LibraryList
+import java.time.LocalDate
+import java.time.ZoneOffset
+import kotlinx.coroutines.launch
+
+private const val SETTINGS_TAB_LABEL = "Settings"
+
+private val listTabs = listOf(
+    "Most played" to LibraryList.MostPlayed,
+    "Never played" to LibraryList.NeverPlayed,
+    "Delete" to LibraryList.DeleteCandidates,
+)
+
+private val mediaPermission =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) Manifest.permission.READ_MEDIA_AUDIO
+    else Manifest.permission.READ_EXTERNAL_STORAGE
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PlaySiftApp(viewModel: LibraryViewModel) {
+    val state by viewModel.state.collectAsState()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
+    var isSettingsOpen by rememberSaveable { mutableStateOf(false) }
+    val trashFlow by viewModel.trashFlow.collectAsState()
+
+    val trashLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+        viewModel.onBatchResult(resultOk = result.resultCode == Activity.RESULT_OK)
+    }
+    LaunchedEffect(trashFlow) {
+        viewModel.takeBatchToLaunch()?.let { batch ->
+            try {
+                trashLauncher.launch(IntentSenderRequest.Builder(trashRequest(context.contentResolver, batch).intentSender).build())
+            } catch (_: Exception) {
+                viewModel.onBatchResult(resultOk = false)
+            }
+        }
+    }
+
+    val isPreparingTrash by viewModel.isPreparingTrash.collectAsState()
+    var selectionAtPermissionRequest by rememberSaveable { mutableStateOf(longArrayOf()) }
+    val prepareTrash = { selectedIds: Set<Long> -> scope.launch { viewModel.prepareTrash(selectedIds) } }
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
+        if (isGranted) {
+            prepareTrash(selectionAtPermissionRequest.toSet())
+        } else {
+            scope.launch {
+                snackbarHostState.showSnackbar("Play Sift needs access to your music files to move them to the trash.")
+            }
+        }
+    }
+
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.onResume() }
+
+    (trashFlow as? TrashFlow.Done)?.let { done ->
+        TrashDoneScreen(
+            movedCount = done.movedCount,
+            attemptedCount = done.attemptedCount,
+            onOpenPlayer = viewModel::openPlayer,
+            onFinished = viewModel::finishTrash,
+        )
+        return
+    }
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        topBar = {
+            TopAppBar(
+                title = { Text("Play Sift") },
+                actions = {
+                    IconButton(onClick = viewModel::refresh) {
+                        Icon(painter = painterResource(R.drawable.ic_refresh), contentDescription = "Refresh")
+                    }
+                },
+            )
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+        bottomBar = {
+            NavigationBar {
+                listTabs.forEach { (label, list) ->
+                    NavigationBarItem(
+                        selected = !isSettingsOpen && state.list == list,
+                        onClick = {
+                            isSettingsOpen = false
+                            viewModel.showList(list)
+                        },
+                        icon = {},
+                        label = { Text(label) },
+                    )
+                }
+                NavigationBarItem(
+                    selected = isSettingsOpen,
+                    onClick = { isSettingsOpen = true },
+                    icon = {},
+                    label = { Text(SETTINGS_TAB_LABEL) },
+                )
+            }
+        },
+    ) { contentPadding ->
+        Box(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
+            when {
+                state.isLoading -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                state.loadFailed -> LoadFailedScreen(onTryAgain = viewModel::refresh)
+                state.access != AccessState.Ready -> AccessScreen(
+                    access = state.access,
+                    onRequestAccess = viewModel::requestPermission,
+                    onCheckAgain = viewModel::refresh,
+                )
+                isSettingsOpen -> SettingsScreen(selected = state.cutoff, onSelect = viewModel::setCutoff)
+                else -> TrackListScreen(
+                    state = state,
+                    today = LocalDate.now(ZoneOffset.UTC),
+                    onToggleSelected = viewModel::toggleSelected,
+                    onSelectAll = viewModel::selectAll,
+                    isPreparingTrash = isPreparingTrash,
+                    onMoveToTrash = {
+                        val selectionNow = state.selectedIds
+                        val hasPermission =
+                            ContextCompat.checkSelfPermission(context, mediaPermission) == PackageManager.PERMISSION_GRANTED
+                        if (hasPermission) {
+                            prepareTrash(selectionNow)
+                        } else {
+                            selectionAtPermissionRequest = selectionNow.toLongArray()
+                            permissionLauncher.launch(mediaPermission)
+                        }
+                    },
+                )
+            }
+        }
+    }
+
+    (trashFlow as? TrashFlow.Confirming)?.let { confirming ->
+        TrashConfirmDialog(
+            plan = confirming.plan,
+            onConfirm = viewModel::confirmTrash,
+            onDismiss = viewModel::cancelTrash,
+        )
+    }
+}
+
+@Composable
+private fun LoadFailedScreen(onTryAgain: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text("Couldn't read your music player's library.")
+        Button(onClick = onTryAgain) { Text("Try again") }
+    }
+}

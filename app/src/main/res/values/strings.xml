@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Play Sift</string>
+
+    <plurals name="trash_confirm_question">
+        <item quantity="one">Move %1$d song (%2$s) to the trash? You can restore them from the trash for about 30 days.</item>
+        <item quantity="other">Move %1$d songs (%2$s) to the trash? You can restore them from the trash for about 30 days.</item>
+    </plurals>
+
+    <plurals name="trash_done_summary">
+        <item quantity="one">Moved %1$d of %2$d song to the trash.</item>
+        <item quantity="other">Moved %1$d of %2$d songs to the trash.</item>
+    </plurals>
+</resources>
