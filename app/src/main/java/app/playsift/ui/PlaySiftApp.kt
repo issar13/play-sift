@@ -44,7 +44,6 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import app.playsift.R
 import app.playsift.files.trashRequest
 import app.playsift.player.AccessState
-import app.playsift.player.LibraryList
 import java.time.LocalDate
 import java.time.ZoneOffset
 import kotlinx.coroutines.launch
@@ -52,9 +51,10 @@ import kotlinx.coroutines.launch
 private const val SETTINGS_TAB_LABEL = "Settings"
 
 private val listTabs = listOf(
-    "Most played" to LibraryList.MostPlayed,
-    "Never played" to LibraryList.NeverPlayed,
-    "Delete" to LibraryList.DeleteCandidates,
+    "Home" to Screen.Home,
+    "Most played" to Screen.MostPlayed,
+    "Never played" to Screen.NeverPlayed,
+    "Delete" to Screen.Delete,
 )
 
 private val mediaPermission =
@@ -124,12 +124,12 @@ fun PlaySiftApp(viewModel: LibraryViewModel) {
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
             NavigationBar {
-                listTabs.forEach { (label, list) ->
+                listTabs.forEach { (label, screen) ->
                     NavigationBarItem(
-                        selected = !isSettingsOpen && state.list == list,
+                        selected = !isSettingsOpen && state.screen == screen,
                         onClick = {
                             isSettingsOpen = false
-                            viewModel.showList(list)
+                            viewModel.showScreen(screen)
                         },
                         icon = {},
                         label = { Text(label) },

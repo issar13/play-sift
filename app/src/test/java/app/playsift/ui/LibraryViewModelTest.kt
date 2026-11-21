@@ -2,7 +2,9 @@ package app.playsift.ui
 
 import android.net.Uri
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import app.playsift.files.FileLocation
 import app.playsift.files.FileMatcher
+import app.playsift.files.FileSizes
 import app.playsift.files.NotRemovableReason
 import app.playsift.files.TrackFile
 import app.playsift.player.Access
@@ -51,7 +53,11 @@ private fun track(id: Long) = PlayerTrack(
     firstSeenAt = Instant.parse("2020-01-01T00:00:00Z"), durationMillis = 1000,
 )
 
-private class FakeLibrary(var tracks: List<PlayerTrack>, var summary: HistorySummary) : Library {
+private class FakeLibrary(
+    var tracks: List<PlayerTrack>,
+    var summary: HistorySummary,
+    var tracksByList: Map<LibraryList, List<PlayerTrack>> = emptyMap(),
+) : Library {
     var trackQueries = 0
     var failure: Throwable? = null
     var gate: CompletableDeferred<Unit>? = null
@@ -59,10 +65,18 @@ private class FakeLibrary(var tracks: List<PlayerTrack>, var summary: HistorySum
         trackQueries += 1
         gate?.await()
         failure?.let { throw it }
-        return tracks
+        return tracksByList[list] ?: tracks
     }
 
     override suspend fun historySummary(): HistorySummary = summary
+}
+
+private class FakeFileSizes(var sizes: Map<FileLocation, Long> = emptyMap()) : FileSizes {
+    var reads = 0
+    override suspend fun sizesByLocation(): Map<FileLocation, Long> {
+        reads += 1
+        return sizes
+    }
 }
 
 private class FakeAccess(var accessState: AccessState) : Access {
@@ -124,7 +138,9 @@ class LibraryViewModelTest {
         library: FakeLibrary = FakeLibrary((1L..3L).map(::track), healthySummary),
         access: FakeAccess = FakeAccess(AccessState.Ready),
         matcher: FakeMatcher = FakeMatcher(),
-    ) = LibraryViewModel(library, access, matcher, settings, clock)
+        fileSizes: FakeFileSizes = FakeFileSizes(),
+        startScreen: Screen = Screen.Delete,
+    ) = LibraryViewModel(library, access, matcher, fileSizes, settings, clock).also { it.showScreen(startScreen) }
 
     @Test
     fun startsOnAccessScreenWhenPermissionMissing() = runTest(dispatcher) {
@@ -163,7 +179,7 @@ class LibraryViewModelTest {
         val viewModel = viewModel()
         advanceUntilIdle()
         viewModel.toggleSelected(2)
-        viewModel.showList(LibraryList.NeverPlayed)
+        viewModel.showScreen(Screen.NeverPlayed)
         advanceUntilIdle()
         assertTrue(viewModel.state.value.selectedIds.isEmpty())
         assertEquals(LibraryList.NeverPlayed, viewModel.state.value.list)
@@ -369,7 +385,7 @@ class LibraryViewModelTest {
         advanceUntilIdle()
         viewModel.toggleSelected(1)
         val queriesBefore = library.trackQueries
-        viewModel.showList(LibraryList.DeleteCandidates)
+        viewModel.showScreen(Screen.Delete)
         advanceUntilIdle()
         assertEquals(setOf(1L), viewModel.state.value.selectedIds)
         assertEquals(queriesBefore, library.trackQueries)
@@ -413,5 +429,82 @@ class LibraryViewModelTest {
         viewModel.clearSelection()
         viewModel.prepareTrash(selectedIds = setOf(1L, 2L))
         assertEquals(listOf(1L, 2L), matcher.matchedTracks.map { it.id })
+    }
+
+    private fun largeTrack(id: Long, fileName: String) = track(id).copy(fileName = fileName)
+
+    private val largeLibrary = FakeLibrary(
+        tracks = emptyList(),
+        summary = healthySummary,
+        tracksByList = mapOf(
+            LibraryList.AllTracks to listOf(largeTrack(1, "small.mp3"), largeTrack(2, "big.mp3"), largeTrack(3, "huge.mp3")),
+            LibraryList.MostPlayed to listOf(track(2).copy(artist = "Star", playCount = 5)),
+            LibraryList.DeleteCandidates to listOf(largeTrack(1, "small.mp3")),
+        ),
+    )
+    private val largeSizes = mapOf(
+        FileLocation("Music/", "small.mp3") to 1_000L,
+        FileLocation("Music/", "big.mp3") to 5_000_000L,
+        FileLocation("Music/", "huge.mp3") to 8_000_000L,
+    )
+
+    @Test
+    fun startsOnHome() = runTest(dispatcher) {
+        val viewModel = viewModel(library = largeLibrary, startScreen = Screen.Home)
+        advanceUntilIdle()
+        assertEquals(Screen.Home, viewModel.state.value.screen)
+        assertEquals(100, viewModel.state.value.home?.totalSongs)
+        assertEquals(1, viewModel.state.value.home?.deleteCandidates)
+    }
+
+    @Test
+    fun initialScreenIsHome() = runTest(dispatcher) {
+        val viewModel = LibraryViewModel(largeLibrary, FakeAccess(AccessState.Ready), FakeMatcher(), FakeFileSizes(), settings, clock)
+        assertEquals(Screen.Home, viewModel.state.value.screen)
+    }
+
+    @Test
+    fun homeWithoutFileAccessHidesSizes() = runTest(dispatcher) {
+        val fileSizes = FakeFileSizes(largeSizes)
+        val viewModel = viewModel(library = largeLibrary, fileSizes = fileSizes, startScreen = Screen.Home)
+        advanceUntilIdle()
+        assertEquals(false, viewModel.state.value.hasFileAccess)
+        assertEquals(null, viewModel.state.value.home?.librarySizeBytes)
+        assertEquals(null, viewModel.state.value.home?.largeSongs)
+        assertEquals(0, fileSizes.reads)
+    }
+
+    @Test
+    fun homeWithFileAccessShowsSizes() = runTest(dispatcher) {
+        val viewModel = viewModel(library = largeLibrary, fileSizes = FakeFileSizes(largeSizes), startScreen = Screen.Home)
+        viewModel.setFileAccess(true)
+        advanceUntilIdle()
+        assertEquals(13_001_000L, viewModel.state.value.home?.librarySizeBytes)
+        assertEquals(2, viewModel.state.value.home?.largeSongs)
+        assertEquals(ArtistPlays("Star", 5), viewModel.state.value.home?.topArtist)
+    }
+
+    @Test
+    fun largeScreenListsLargeSongsAndClearsSelection() = runTest(dispatcher) {
+        val viewModel = viewModel(library = largeLibrary, fileSizes = FakeFileSizes(largeSizes), startScreen = Screen.Delete)
+        viewModel.setFileAccess(true)
+        advanceUntilIdle()
+        viewModel.toggleSelected(1)
+        viewModel.showScreen(Screen.Large)
+        advanceUntilIdle()
+        assertEquals(listOf(3L, 2L), viewModel.state.value.tracks.map { it.id })
+        assertEquals(mapOf(3L to 8_000_000L, 2L to 5_000_000L), viewModel.state.value.sizesById)
+        assertTrue(viewModel.state.value.selectedIds.isEmpty())
+    }
+
+    @Test
+    fun trashFromLargeUsesSelectedLargeSongs() = runTest(dispatcher) {
+        val matcher = FakeMatcher()
+        val viewModel = viewModel(library = largeLibrary, matcher = matcher, fileSizes = FakeFileSizes(largeSizes), startScreen = Screen.Large)
+        viewModel.setFileAccess(true)
+        advanceUntilIdle()
+        viewModel.selectAll()
+        viewModel.prepareTrash()
+        assertEquals(listOf(3L, 2L), matcher.matchedTracks.map { it.id })
     }
 }

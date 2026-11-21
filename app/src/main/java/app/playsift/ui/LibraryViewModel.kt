@@ -5,6 +5,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import app.playsift.files.FileMatcher
+import app.playsift.files.FileSizes
+import app.playsift.files.MediaStoreFileSizes
 import app.playsift.files.TrackFile
 import app.playsift.files.TrackFileMatcher
 import app.playsift.files.trashBatches
@@ -15,11 +17,14 @@ import app.playsift.player.Library
 import app.playsift.player.LibraryList
 import app.playsift.player.PlayerAccess
 import app.playsift.player.PlayerLibrary
+import app.playsift.player.PlayerTrack
 import app.playsift.player.historyHealth
 import app.playsift.settings.CutoffOption
 import app.playsift.settings.CutoffSettings
 import app.playsift.settings.settingsDataStore
 import java.time.Clock
+import java.time.Instant
+import java.time.Period
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -32,13 +37,15 @@ class LibraryViewModel(
     private val library: Library,
     private val access: Access,
     private val matcher: FileMatcher,
+    private val fileSizes: FileSizes,
     private val settings: CutoffSettings,
     private val clock: Clock,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(
         LibraryUiState(
             access = AccessState.NeedsPermission,
-            list = LibraryList.DeleteCandidates,
+            list = LibraryList.AllTracks,
+            screen = Screen.Home,
             tracks = emptyList(),
             historyHealth = HistoryHealth.Healthy,
             cutoff = CutoffOption.OneYear,
@@ -66,9 +73,16 @@ class LibraryViewModel(
         loadJob = viewModelScope.launch { load() }
     }
 
-    fun showList(list: LibraryList) {
-        if (list == mutableState.value.list) return
-        mutableState.update { it.copy(list = list) }
+    fun showScreen(screen: Screen) {
+        if (screen == mutableState.value.screen) return
+        mutableState.update { it.copy(screen = screen, list = screen.libraryList() ?: it.list, selectedIds = emptySet()) }
+        reload()
+    }
+
+    /** The UI reports the media permission here; sizes are only read once it is granted. */
+    fun setFileAccess(granted: Boolean) {
+        if (granted == mutableState.value.hasFileAccess) return
+        mutableState.update { it.copy(hasFileAccess = granted) }
         reload()
     }
 
@@ -180,7 +194,6 @@ class LibraryViewModel(
                 return
             }
             val now = clock.instant()
-            val tracks = library.tracks(current.list, current.cutoff.period, now)
             val summary = library.historySummary()
             val health = historyHealth(
                 earliestFirstSeenAt = summary.earliestFirstSeenAt,
@@ -189,8 +202,17 @@ class LibraryViewModel(
                 cutoff = current.cutoff.period,
                 now = now,
             )
+            val content = loadScreenContent(current, now)
             mutableState.update {
-                it.copy(access = accessState, tracks = tracks, historyHealth = health, selectedIds = emptySet(), isLoading = false)
+                it.copy(
+                    access = accessState,
+                    tracks = content.tracks,
+                    home = content.home,
+                    sizesById = content.sizesById,
+                    historyHealth = health,
+                    selectedIds = emptySet(),
+                    isLoading = false,
+                )
             }
         } catch (_: SecurityException) {
             showEmpty(AccessState.NeedsPermission)
@@ -203,6 +225,51 @@ class LibraryViewModel(
         }
     }
 
+    private class ScreenContent(val tracks: List<PlayerTrack>, val home: HomeSummary?, val sizesById: Map<Long, Long>)
+
+    private suspend fun loadScreenContent(current: LibraryUiState, now: Instant): ScreenContent {
+        val period = current.cutoff.period
+        val sizes = if (current.hasFileAccess) fileSizes.sizesByLocation() else null
+        return when (current.screen) {
+            Screen.Home -> ScreenContent(
+                tracks = emptyList(),
+                home = homeSummary(
+                    history = library.historySummary(),
+                    mostPlayed = library.tracks(LibraryList.MostPlayed, period, now),
+                    deleteCandidates = library.tracks(LibraryList.DeleteCandidates, period, now),
+                    allTracks = library.tracks(LibraryList.AllTracks, period, now),
+                    sizes = sizes,
+                ),
+                sizesById = emptyMap(),
+            )
+            // Sizes and tracks come from two providers, so the large songs are filtered here instead of in SQL.
+            Screen.Large -> {
+                val largeSongList = largeSongs(library.tracks(LibraryList.AllTracks, period, now), sizes.orEmpty())
+                ScreenContent(
+                    tracks = largeSongList.map { (track, _) -> track },
+                    home = null,
+                    sizesById = largeSongList.associate { (track, sizeBytes) -> track.id to sizeBytes },
+                )
+            }
+            Screen.Settings -> ScreenContent(emptyList(), null, emptyMap())
+            Screen.MostPlayed -> listContent(LibraryList.MostPlayed, period, now)
+            Screen.NeverPlayed -> listContent(LibraryList.NeverPlayed, period, now)
+            Screen.Delete -> listContent(LibraryList.DeleteCandidates, period, now)
+        }
+    }
+
+    private suspend fun listContent(list: LibraryList, period: Period, now: Instant) =
+        ScreenContent(library.tracks(list, period, now), null, emptyMap())
+
+    private fun Screen.libraryList(): LibraryList? =
+        when (this) {
+            Screen.MostPlayed -> LibraryList.MostPlayed
+            Screen.NeverPlayed -> LibraryList.NeverPlayed
+            Screen.Delete -> LibraryList.DeleteCandidates
+            Screen.Large -> LibraryList.Large
+            Screen.Home, Screen.Settings -> null
+        }
+
     private fun showEmpty(accessState: AccessState) =
         mutableState.update { it.copy(access = accessState, tracks = emptyList(), selectedIds = emptySet(), isLoading = false) }
 
@@ -213,6 +280,7 @@ class LibraryViewModel(
                 library = PlayerLibrary(application.contentResolver),
                 access = PlayerAccess(application),
                 matcher = TrackFileMatcher(application.contentResolver),
+                fileSizes = MediaStoreFileSizes(application.contentResolver),
                 settings = CutoffSettings(application.settingsDataStore),
                 clock = Clock.systemUTC(),
             ) as T

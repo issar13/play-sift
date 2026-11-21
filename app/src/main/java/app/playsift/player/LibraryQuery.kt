@@ -4,7 +4,7 @@ import java.time.Instant
 import java.time.Period
 import java.time.ZoneOffset
 
-enum class LibraryList { MostPlayed, NeverPlayed, DeleteCandidates }
+enum class LibraryList { MostPlayed, NeverPlayed, DeleteCandidates, AllTracks, Large }
 
 data class LibraryQuery(
     val selection: String?,
@@ -30,5 +30,11 @@ fun libraryQuery(list: LibraryList, cutoff: Period, now: Instant): LibraryQuery 
                 "${PlayerContract.Columns.CREATED_AT} < ?",
             selectionArgs = arrayOf(now.atZone(ZoneOffset.UTC).minus(cutoff).toEpochSecond().toString()),
             sortOrder = "${PlayerContract.Columns.CREATED_AT} ASC",
+        )
+        // Large is the same query as AllTracks: sizes come from another provider, so the view model filters.
+        LibraryList.AllTracks, LibraryList.Large -> LibraryQuery(
+            selection = null,
+            selectionArgs = null,
+            sortOrder = "${PlayerContract.Columns.TITLE} ASC",
         )
     }

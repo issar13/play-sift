@@ -34,4 +34,14 @@ class LibraryQueryTest {
         assertTrue(selection.contains("total_played_times"))
         assertFalse(selection.contains(".played_times "))
     }
+
+    @Test
+    fun allTracksAndLargeHaveNoFilterAndSortByTitle() {
+        listOf(LibraryList.AllTracks, LibraryList.Large).forEach { list ->
+            val query = libraryQuery(list, Period.ofYears(1), now)
+
+            assertEquals(null, query.selection)
+            assertEquals("title_tag ASC", query.sortOrder)
+        }
+    }
 }

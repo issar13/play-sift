@@ -7,6 +7,8 @@ import app.playsift.player.LibraryList
 import app.playsift.player.PlayerTrack
 import app.playsift.settings.CutoffOption
 
+enum class Screen { Home, MostPlayed, NeverPlayed, Delete, Large, Settings }
+
 data class LibraryUiState(
     val access: AccessState,
     val list: LibraryList,
@@ -16,6 +18,10 @@ data class LibraryUiState(
     val selectedIds: Set<Long>,
     val isLoading: Boolean,
     val loadFailed: Boolean = false,
+    val screen: Screen = Screen.Home,
+    val home: HomeSummary? = null,
+    val sizesById: Map<Long, Long> = emptyMap(),
+    val hasFileAccess: Boolean = false,
 )
 
 data class TrashPlan(
