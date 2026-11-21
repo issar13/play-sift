@@ -1,5 +1,6 @@
 package app.playsift.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -18,6 +19,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -43,15 +48,19 @@ fun TrackListScreen(
         if (isDeleteList) {
             TextButton(onClick = onSelectAll, modifier = Modifier.padding(horizontal = 8.dp)) { Text("Select all") }
         }
-        LazyColumn(modifier = Modifier.weight(1f)) {
-            items(state.tracks, key = { it.id }) { track ->
-                TrackRow(
-                    track = track,
-                    list = state.list,
-                    today = today,
-                    isSelected = track.id in state.selectedIds,
-                    onToggleSelected = { onToggleSelected(track.id) },
-                )
+        if (state.list == LibraryList.MostPlayed) {
+            MostPlayedList(tracks = state.tracks, today = today, modifier = Modifier.weight(1f))
+        } else {
+            LazyColumn(modifier = Modifier.weight(1f)) {
+                items(state.tracks, key = { it.id }) { track ->
+                    TrackRow(
+                        track = track,
+                        list = state.list,
+                        today = today,
+                        isSelected = track.id in state.selectedIds,
+                        onToggleSelected = { onToggleSelected(track.id) },
+                    )
+                }
             }
         }
         if (isDeleteList) {
@@ -70,6 +79,51 @@ fun TrackListScreen(
         }
     }
 }
+
+@Composable
+private fun MostPlayedList(tracks: List<PlayerTrack>, today: LocalDate, modifier: Modifier) {
+    val entries = groupByMatchingPlays(tracks)
+    var expandedPlays by rememberSaveable { mutableStateOf(listOf<Int>()) }
+    LazyColumn(modifier = modifier) {
+        entries.forEach { entry ->
+            when (entry) {
+                is MostPlayedEntry.Single -> item(key = entry.track.id) {
+                    TrackRow(entry.track, LibraryList.MostPlayed, today, isSelected = false, onToggleSelected = {})
+                }
+                is MostPlayedEntry.Group -> {
+                    val isExpanded = entry.plays in expandedPlays
+                    val toggleGroup = {
+                        expandedPlays = if (isExpanded) expandedPlays - entry.plays else expandedPlays + entry.plays
+                    }
+                    val visibleTracks = if (isExpanded) entry.tracks else entry.tracks.take(GROUP_COLLAPSED_SONGS)
+                    item(key = "group-${entry.plays}") {
+                        Text(
+                            text = "${entry.plays} plays \u00b7 ${entry.tracks.size} songs",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.fillMaxWidth().clickable(onClick = toggleGroup).padding(16.dp),
+                        )
+                    }
+                    items(visibleTracks, key = { track -> track.id }) { track ->
+                        TrackRow(track, LibraryList.MostPlayed, today, isSelected = false, onToggleSelected = {})
+                    }
+                    if (!isExpanded) {
+                        item(key = "more-${entry.plays}") {
+                            Text(
+                                text = "Show ${entry.tracks.size - GROUP_COLLAPSED_SONGS} more",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.fillMaxWidth().clickable(onClick = toggleGroup).padding(16.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private const val GROUP_COLLAPSED_SONGS = 2
 
 @Composable
 private fun HistoryBanner(health: HistoryHealth, cutoffLabel: String) {

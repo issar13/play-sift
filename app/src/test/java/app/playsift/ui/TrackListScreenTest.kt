@@ -2,7 +2,9 @@ package app.playsift.ui
 
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.onNodeWithText
 import app.playsift.player.AccessState
 import app.playsift.player.HistoryHealth
@@ -85,5 +87,20 @@ class TrackListScreenTest {
     fun mostPlayedRowShowsPlayCount() {
         show(state(list = LibraryList.MostPlayed))
         composeRule.onNodeWithText("7 plays").assertExists()
+    }
+
+    @Test
+    fun mostPlayedShowsGroupHeaderAndCollapses() {
+        val groupedTracks = (1L..7L).map { id -> track.copy(id = id, title = "Song $id", playCount = 12) }
+        show(state(list = LibraryList.MostPlayed).copy(tracks = groupedTracks))
+        composeRule.onNodeWithText("12 plays \u00b7 7 songs").assertIsDisplayed()
+        composeRule.onNodeWithText("Song 1").assertIsDisplayed()
+        composeRule.onNodeWithText("Song 2").assertIsDisplayed()
+        composeRule.onNodeWithText("Song 3").assertDoesNotExist()
+        composeRule.onNodeWithText("Show 5 more").performClick()
+        composeRule.onNodeWithText("Song 3").assertIsDisplayed()
+        composeRule.onNodeWithText("Show 5 more").assertDoesNotExist()
+        composeRule.onNodeWithText("12 plays \u00b7 7 songs").performClick()
+        composeRule.onNodeWithText("Song 3").assertDoesNotExist()
     }
 }
