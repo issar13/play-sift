@@ -56,14 +56,15 @@ fun largeSongs(allTracks: List<PlayerTrack>, sizes: Map<FileLocation, Long>): Li
         .filter { (_, sizeBytes) -> sizeBytes >= LARGE_SONG_MINIMUM_BYTES }
         .sortedByDescending { (_, sizeBytes) -> sizeBytes }
 
+/** Tracks without a known size (shared location, cue, stream) count as 0, so this is a lower bound. */
 private fun sizeOf(tracks: List<PlayerTrack>, sizes: Map<FileLocation, Long>): Long =
     tracks.sumOf { track -> track.fileLocation()?.let(sizes::get) ?: 0L }
 
 /** Sums plays by artist in Kotlin because the player's provider can't group. Ties go to the alphabetically first artist. */
 private fun topArtist(mostPlayed: List<PlayerTrack>): ArtistPlays? =
     mostPlayed
-        .filter { it.artist.isNotBlank() }
-        .groupBy({ it.artist }, { it.playCount })
+        .filter { track -> track.artist.isNotBlank() }
+        .groupBy({ track -> track.artist }, { track -> track.playCount })
         .map { (artist, playCounts) -> ArtistPlays(artist, playCounts.sum()) }
-        .sortedWith(compareByDescending<ArtistPlays> { it.plays }.thenBy { it.artist })
+        .sortedWith(compareByDescending<ArtistPlays> { artistPlays -> artistPlays.plays }.thenBy { artistPlays -> artistPlays.artist })
         .firstOrNull()

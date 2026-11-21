@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import app.playsift.files.FileLocation
 import app.playsift.files.FileMatcher
 import app.playsift.files.FileSizes
 import app.playsift.files.MediaStoreFileSizes
@@ -13,6 +14,7 @@ import app.playsift.files.trashBatches
 import app.playsift.player.Access
 import app.playsift.player.AccessState
 import app.playsift.player.HistoryHealth
+import app.playsift.player.HistorySummary
 import app.playsift.player.Library
 import app.playsift.player.LibraryList
 import app.playsift.player.PlayerAccess
@@ -202,7 +204,7 @@ class LibraryViewModel(
                 cutoff = current.cutoff.period,
                 now = now,
             )
-            val content = loadScreenContent(current, now)
+            val content = loadScreenContent(current, summary, now)
             mutableState.update {
                 it.copy(
                     access = accessState,
@@ -220,31 +222,30 @@ class LibraryViewModel(
             throw exception
         } catch (_: Exception) {
             mutableState.update {
-                it.copy(access = accessRead ?: it.access, tracks = emptyList(), selectedIds = emptySet(), isLoading = false, loadFailed = true)
+                it.copy(access = accessRead ?: it.access, tracks = emptyList(), home = null, sizesById = emptyMap(), selectedIds = emptySet(), isLoading = false, loadFailed = true)
             }
         }
     }
 
     private class ScreenContent(val tracks: List<PlayerTrack>, val home: HomeSummary?, val sizesById: Map<Long, Long>)
 
-    private suspend fun loadScreenContent(current: LibraryUiState, now: Instant): ScreenContent {
+    private suspend fun loadScreenContent(current: LibraryUiState, summary: HistorySummary, now: Instant): ScreenContent {
         val period = current.cutoff.period
-        val sizes = if (current.hasFileAccess) fileSizes.sizesByLocation() else null
         return when (current.screen) {
             Screen.Home -> ScreenContent(
                 tracks = emptyList(),
                 home = homeSummary(
-                    history = library.historySummary(),
+                    history = summary,
                     mostPlayed = library.tracks(LibraryList.MostPlayed, period, now),
                     deleteCandidates = library.tracks(LibraryList.DeleteCandidates, period, now),
                     allTracks = library.tracks(LibraryList.AllTracks, period, now),
-                    sizes = sizes,
+                    sizes = sizesOrNull(current.hasFileAccess),
                 ),
                 sizesById = emptyMap(),
             )
             // Sizes and tracks come from two providers, so the large songs are filtered here instead of in SQL.
             Screen.Large -> {
-                val largeSongList = largeSongs(library.tracks(LibraryList.AllTracks, period, now), sizes.orEmpty())
+                val largeSongList = largeSongs(library.tracks(LibraryList.AllTracks, period, now), sizesOrNull(current.hasFileAccess).orEmpty())
                 ScreenContent(
                     tracks = largeSongList.map { (track, _) -> track },
                     home = null,
@@ -257,6 +258,20 @@ class LibraryViewModel(
             Screen.Delete -> listContent(LibraryList.DeleteCandidates, period, now)
         }
     }
+
+    /** Sizes are display only, so a failed read hides them instead of failing the screen. */
+    private suspend fun sizesOrNull(hasFileAccess: Boolean): Map<FileLocation, Long>? =
+        if (!hasFileAccess) {
+            null
+        } else {
+            try {
+                fileSizes.sizesByLocation()
+            } catch (exception: CancellationException) {
+                throw exception
+            } catch (_: Exception) {
+                null
+            }
+        }
 
     private suspend fun listContent(list: LibraryList, period: Period, now: Instant) =
         ScreenContent(library.tracks(list, period, now), null, emptyMap())
@@ -271,7 +286,7 @@ class LibraryViewModel(
         }
 
     private fun showEmpty(accessState: AccessState) =
-        mutableState.update { it.copy(access = accessState, tracks = emptyList(), selectedIds = emptySet(), isLoading = false) }
+        mutableState.update { it.copy(access = accessState, tracks = emptyList(), home = null, sizesById = emptyMap(), selectedIds = emptySet(), isLoading = false) }
 
     companion object {
         fun factory(application: Application): ViewModelProvider.Factory = object : ViewModelProvider.Factory {

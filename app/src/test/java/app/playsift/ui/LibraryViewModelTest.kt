@@ -73,8 +73,10 @@ private class FakeLibrary(
 
 private class FakeFileSizes(var sizes: Map<FileLocation, Long> = emptyMap()) : FileSizes {
     var reads = 0
+    var failure: Throwable? = null
     override suspend fun sizesByLocation(): Map<FileLocation, Long> {
         reads += 1
+        failure?.let { throw it }
         return sizes
     }
 }
@@ -506,5 +508,38 @@ class LibraryViewModelTest {
         viewModel.selectAll()
         viewModel.prepareTrash()
         assertEquals(listOf(3L, 2L), matcher.matchedTracks.map { it.id })
+    }
+
+    @Test
+    fun sizeFailureKeepsCountsAndHidesSizes() = runTest(dispatcher) {
+        val fileSizes = FakeFileSizes(largeSizes).also { it.failure = SecurityException("no media access") }
+        val viewModel = viewModel(library = largeLibrary, fileSizes = fileSizes, startScreen = Screen.Home)
+        viewModel.setFileAccess(true)
+        advanceUntilIdle()
+        assertEquals(false, viewModel.state.value.loadFailed)
+        assertEquals(AccessState.Ready, viewModel.state.value.access)
+        assertEquals(100, viewModel.state.value.home?.totalSongs)
+        assertEquals(1, viewModel.state.value.home?.deleteCandidates)
+        assertEquals(null, viewModel.state.value.home?.librarySizeBytes)
+    }
+
+    @Test
+    fun listScreenDoesNotReadSizes() = runTest(dispatcher) {
+        val fileSizes = FakeFileSizes(largeSizes)
+        val viewModel = viewModel(library = largeLibrary, fileSizes = fileSizes, startScreen = Screen.Delete)
+        viewModel.setFileAccess(true)
+        advanceUntilIdle()
+        assertEquals(0, fileSizes.reads)
+    }
+
+    @Test
+    fun homeIsClearedWhenAccessIsLost() = runTest(dispatcher) {
+        val access = FakeAccess(AccessState.Ready)
+        val viewModel = viewModel(library = largeLibrary, access = access, startScreen = Screen.Home)
+        advanceUntilIdle()
+        access.accessState = AccessState.NeedsPermission
+        viewModel.refresh()
+        advanceUntilIdle()
+        assertEquals(null, viewModel.state.value.home)
     }
 }
