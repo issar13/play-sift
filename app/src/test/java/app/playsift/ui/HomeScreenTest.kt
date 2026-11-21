@@ -87,11 +87,11 @@ class HomeScreenTest {
             PlaySiftTheme { HomeScreen(state = state(), onOpenDelete = {}, onOpenLarge = {}, onAllowFileAccess = {}) }
         }
         composeRule.onNodeWithText("120 songs").assertExists()
-        composeRule.onNodeWithText("1234.5 MB").assertExists()
+        composeRule.onNodeWithText("1234.5 MB in known files").assertExists()
         composeRule.onNodeWithText("80").assertExists()
         composeRule.onNodeWithText("40").assertExists()
         composeRule.onNodeWithText("12").assertExists()
-        composeRule.onNodeWithText("48.0 MB").assertExists()
+        composeRule.onNodeWithText("48.0 MB in known files").assertExists()
         composeRule.onNodeWithText("21.5 MB").assertExists()
         composeRule.onNodeWithText("Most played song: Blue Monday by New Order (7 plays)").assertExists()
         composeRule.onNodeWithText("Top artist: New Order (15 plays)").assertExists()
@@ -134,7 +134,7 @@ class HomeScreenTest {
             }
         }
         composeRule.onNodeWithText("120 songs").assertExists()
-        composeRule.onNodeWithText("1234.5 MB").assertDoesNotExist()
+        composeRule.onNodeWithText("1234.5 MB in known files").assertDoesNotExist()
         composeRule.onNodeWithText("Allow file access").performClick()
         assertEquals(1, allowTapCount)
     }
@@ -199,5 +199,22 @@ class HomeScreenTest {
         assertEquals(errorContainer, deleteColour)
         assertNotEquals(errorContainer, largeColour)
         assertTrue(deleteColour != Color.Unspecified)
+    }
+
+    @Test
+    fun largeScreenShowsUnavailableInsteadOfEmptyMessage() {
+        composeRule.setContent {
+            PlaySiftTheme {
+                LargeSongsScreen(
+                    state = state(screen = Screen.Large, tracks = emptyList()).copy(sizesUnavailable = true),
+                    onBack = {},
+                    onToggleSelected = {},
+                    onSelectAll = {},
+                    onMoveToTrash = {},
+                )
+            }
+        }
+        composeRule.onNodeWithText("Sizes unavailable. Couldn't read your file sizes.").assertExists()
+        composeRule.onNodeWithText("No songs of 5 MB or more.").assertDoesNotExist()
     }
 }

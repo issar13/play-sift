@@ -2,6 +2,8 @@ package app.playsift.ui
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -148,13 +150,19 @@ internal fun TrackRow(
     onToggleSelected: () -> Unit,
     sizeBytes: Long? = null,
 ) {
+    val isSelectable = list == LibraryList.DeleteCandidates || list == LibraryList.Large
+    val rowModifier = if (isSelectable) {
+        Modifier.toggleable(value = isSelected, role = Role.Checkbox, onValueChange = { onToggleSelected() })
+    } else {
+        Modifier
+    }
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        modifier = rowModifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        if (list == LibraryList.DeleteCandidates || list == LibraryList.Large) {
-            Checkbox(checked = isSelected, onCheckedChange = { onToggleSelected() })
+        if (isSelectable) {
+            Checkbox(checked = isSelected, onCheckedChange = null)
         }
         Column(modifier = Modifier.weight(1f)) {
             Text(text = track.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1)

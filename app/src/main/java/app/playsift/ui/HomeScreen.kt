@@ -70,7 +70,7 @@ fun HomeScreen(
             SummaryCard(
                 title = "Delete candidates",
                 value = summary.deleteCandidates.toString(),
-                detail = summary.deleteCandidatesSizeBytes?.let(::megabytesText),
+                detail = summary.deleteCandidatesSizeBytes?.let { sizeBytes -> "${megabytesText(sizeBytes)} in known files" },
                 containerColor = MaterialTheme.colorScheme.errorContainer,
                 contentColor = MaterialTheme.colorScheme.onErrorContainer,
                 testTag = "deleteCard",
@@ -103,7 +103,7 @@ private fun HeaderBand(summary: HomeSummary) {
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
             )
             summary.librarySizeBytes?.let { librarySizeBytes ->
-                Text(megabytesText(librarySizeBytes), color = MaterialTheme.colorScheme.onPrimaryContainer)
+                Text("${megabytesText(librarySizeBytes)} in known files", color = MaterialTheme.colorScheme.onPrimaryContainer)
             }
             LinearProgressIndicator(progress = { playedFraction }, modifier = Modifier.fillMaxWidth())
             Text(

@@ -44,7 +44,9 @@ fun LargeSongsScreen(
             Text("Large songs", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
             TextButton(onClick = onSelectAll) { Text("Select all") }
         }
-        if (state.tracks.isEmpty()) {
+        if (state.sizesUnavailable) {
+            Text("Sizes unavailable. Couldn't read your file sizes.", modifier = Modifier.padding(16.dp))
+        } else if (state.tracks.isEmpty()) {
             Text("No songs of 5 MB or more.", modifier = Modifier.padding(16.dp))
         }
         LazyColumn(modifier = Modifier.weight(1f)) {
