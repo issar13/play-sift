@@ -79,7 +79,7 @@ fun HomeScreen(
             )
             SummaryCard(
                 title = "Large songs 5 MB+",
-                value = summary.largeSongs?.toString() ?: "Allow file access",
+                value = summary.largeSongs?.toString() ?: if (state.hasFileAccess) "Sizes unavailable" else "Allow file access",
                 detail = summary.largeSongsSizeBytes?.let(::megabytesText),
                 containerColor = MaterialTheme.colorScheme.surfaceVariant,
                 contentColor = MaterialTheme.colorScheme.onSurfaceVariant,

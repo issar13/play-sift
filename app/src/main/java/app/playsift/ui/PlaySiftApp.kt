@@ -2,8 +2,13 @@ package app.playsift.ui
 
 import android.Manifest
 import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
@@ -39,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -109,7 +115,11 @@ fun PlaySiftApp(viewModel: LibraryViewModel) {
         }
     }
 
-    val fileAccessLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission(), viewModel::setFileAccess)
+    var isFileAccessBlocked by rememberSaveable { mutableStateOf(false) }
+    val fileAccessLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
+        viewModel.setFileAccess(isGranted)
+        isFileAccessBlocked = !isGranted && !ActivityCompat.shouldShowRequestPermissionRationale(context.findActivity(), mediaPermission)
+    }
     var hasAskedForFileAccess by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         if (ContextCompat.checkSelfPermission(context, mediaPermission) == PackageManager.PERMISSION_GRANTED) {
@@ -122,7 +132,11 @@ fun PlaySiftApp(viewModel: LibraryViewModel) {
 
     BackHandler(enabled = state.screen == Screen.Large) { viewModel.showScreen(Screen.Home) }
 
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.onResume() }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        viewModel.onResume()
+        val hasFileAccess = ContextCompat.checkSelfPermission(context, mediaPermission) == PackageManager.PERMISSION_GRANTED
+        viewModel.setFileAccess(hasFileAccess)
+    }
 
     (trashFlow as? TrashFlow.Done)?.let { done ->
         TrashDoneScreen(
@@ -173,7 +187,15 @@ fun PlaySiftApp(viewModel: LibraryViewModel) {
                     state = state,
                     onOpenDelete = { viewModel.showScreen(Screen.Delete) },
                     onOpenLarge = { viewModel.showScreen(Screen.Large) },
-                    onAllowFileAccess = { fileAccessLauncher.launch(mediaPermission) },
+                    onAllowFileAccess = {
+                        if (isFileAccessBlocked) {
+                            context.startActivity(
+                                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")),
+                            )
+                        } else {
+                            fileAccessLauncher.launch(mediaPermission)
+                        }
+                    },
                 )
                 state.screen == Screen.Settings -> SettingsScreen(selected = state.cutoff, onSelect = viewModel::setCutoff)
                 state.screen == Screen.Large -> LargeSongsScreen(
@@ -204,6 +226,9 @@ fun PlaySiftApp(viewModel: LibraryViewModel) {
         )
     }
 }
+
+private tailrec fun Context.findActivity(): Activity =
+    this as? Activity ?: (this as ContextWrapper).baseContext.findActivity()
 
 @Composable
 private fun LoadFailedScreen(onTryAgain: () -> Unit) {

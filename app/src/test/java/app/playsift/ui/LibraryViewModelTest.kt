@@ -487,6 +487,19 @@ class LibraryViewModelTest {
     }
 
     @Test
+    fun fileAccessFollowsPermissionRecheckOnResume() = runTest(dispatcher) {
+        val viewModel = viewModel(library = largeLibrary, fileSizes = FakeFileSizes(largeSizes), startScreen = Screen.Home)
+        advanceUntilIdle()
+        viewModel.setFileAccess(true)
+        advanceUntilIdle()
+        assertEquals(2, viewModel.state.value.home?.largeSongs)
+        viewModel.setFileAccess(false)
+        advanceUntilIdle()
+        assertEquals(false, viewModel.state.value.hasFileAccess)
+        assertEquals(null, viewModel.state.value.home?.largeSongs)
+    }
+
+    @Test
     fun largeScreenListsLargeSongsAndClearsSelection() = runTest(dispatcher) {
         val viewModel = viewModel(library = largeLibrary, fileSizes = FakeFileSizes(largeSizes), startScreen = Screen.Delete)
         viewModel.setFileAccess(true)

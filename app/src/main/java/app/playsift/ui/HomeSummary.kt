@@ -33,14 +33,14 @@ fun homeSummary(
     allTracks: List<PlayerTrack>,
     sizes: Map<FileLocation, Long>?,
 ): HomeSummary {
-    val largeSongList = sizes?.let { largeSongs(allTracks, it) }
+    val largeSongList = sizes?.let { knownSizes -> largeSongs(allTracks, knownSizes) }
     return HomeSummary(
         totalSongs = history.totalTracks,
         playedSongs = history.totalTracks - history.unplayedTracks,
         neverPlayedSongs = history.unplayedTracks,
         deleteCandidates = deleteCandidates.size,
-        deleteCandidatesSizeBytes = sizes?.let { sizeOf(deleteCandidates, it) },
-        librarySizeBytes = sizes?.let { sizeOf(allTracks, it) },
+        deleteCandidatesSizeBytes = sizes?.let { knownSizes -> sizeOf(deleteCandidates, knownSizes) },
+        librarySizeBytes = sizes?.let { knownSizes -> sizeOf(allTracks, knownSizes) },
         largeSongs = largeSongList?.size,
         largeSongsSizeBytes = largeSongList?.sumOf { (_, sizeBytes) -> sizeBytes },
         mostPlayed = mostPlayed.firstOrNull(),

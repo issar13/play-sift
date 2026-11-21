@@ -98,6 +98,23 @@ class HomeScreenTest {
     }
 
     @Test
+    fun homeWithAccessButNoSizesShowsSizesUnavailable() {
+        val withoutSizes = summary.copy(largeSongs = null, largeSongsSizeBytes = null)
+        composeRule.setContent {
+            PlaySiftTheme {
+                HomeScreen(
+                    state = state(home = withoutSizes, hasFileAccess = true),
+                    onOpenDelete = {},
+                    onOpenLarge = {},
+                    onAllowFileAccess = {},
+                )
+            }
+        }
+        composeRule.onNodeWithText("Sizes unavailable").assertExists()
+        composeRule.onNodeWithText("Allow file access").assertDoesNotExist()
+    }
+
+    @Test
     fun homeWithoutAccessShowsAllowFileAccess() {
         var allowTapCount = 0
         val withoutSizes = summary.copy(

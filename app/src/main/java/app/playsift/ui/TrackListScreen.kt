@@ -98,7 +98,7 @@ private fun MostPlayedList(tracks: List<PlayerTrack>, today: LocalDate, modifier
                     val visibleTracks = if (isExpanded) entry.tracks else entry.tracks.take(GROUP_COLLAPSED_SONGS)
                     item(key = "group-${entry.plays}") {
                         Text(
-                            text = "${entry.plays} plays \u00b7 ${entry.tracks.size} songs",
+                            text = "${if (entry.plays == 1) "1 play" else "${entry.plays} plays"} \u00b7 ${entry.tracks.size} songs",
                             style = MaterialTheme.typography.titleSmall,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.fillMaxWidth().clickable(onClick = toggleGroup).padding(16.dp),

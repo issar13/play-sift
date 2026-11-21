@@ -103,4 +103,11 @@ class TrackListScreenTest {
         composeRule.onNodeWithText("12 plays \u00b7 7 songs").performClick()
         composeRule.onNodeWithText("Song 3").assertDoesNotExist()
     }
+
+    @Test
+    fun mostPlayedGroupHeaderUsesSingularForOnePlay() {
+        val playedOnce = (1L..6L).map { id -> track.copy(id = id, title = "Song $id", playCount = 1) }
+        show(state(list = LibraryList.MostPlayed).copy(tracks = playedOnce))
+        composeRule.onNodeWithText("1 play \u00b7 6 songs").assertIsDisplayed()
+    }
 }
