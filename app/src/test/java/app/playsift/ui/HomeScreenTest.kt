@@ -160,7 +160,7 @@ class HomeScreenTest {
         }
         composeRule.onNodeWithTag("largeCard").performClick()
         composeRule.onNodeWithText("Long Mix").assertExists()
-        composeRule.onNodeWithText("6.0 MB").assertExists()
+        composeRule.onNodeWithText("6.0 MB \u00b7 7 plays").assertExists()
     }
 
     @Test
@@ -199,6 +199,33 @@ class HomeScreenTest {
         assertEquals(errorContainer, deleteColour)
         assertNotEquals(errorContainer, largeColour)
         assertTrue(deleteColour != Color.Unspecified)
+    }
+
+    @Test
+    fun largeSongRowsShowSizeAndPlayCount() {
+        val tracks = listOf(
+            track.copy(id = 1, title = "Heavy", playCount = 12),
+            track.copy(id = 2, title = "Once", playCount = 1),
+            track.copy(id = 3, title = "Unheard", playCount = 0),
+        )
+        composeRule.setContent {
+            PlaySiftTheme {
+                LargeSongsScreen(
+                    state = state(
+                        screen = Screen.Large,
+                        tracks = tracks,
+                        sizesById = mapOf(1L to 8_400_000L, 2L to 6_000_000L, 3L to 5_500_000L),
+                    ),
+                    onBack = {},
+                    onToggleSelected = {},
+                    onSelectAll = {},
+                    onMoveToTrash = {},
+                )
+            }
+        }
+        composeRule.onNodeWithText("8.4 MB \u00b7 12 plays").assertExists()
+        composeRule.onNodeWithText("6.0 MB \u00b7 1 play").assertExists()
+        composeRule.onNodeWithText("5.5 MB \u00b7 Never played").assertExists()
     }
 
     @Test

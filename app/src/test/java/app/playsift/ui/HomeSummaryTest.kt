@@ -79,16 +79,20 @@ class HomeSummaryTest {
     }
 
     @Test
-    fun largeSongsKeepsFiveMegabytesAndUpBiggestFirst() {
-        val allTracks = (1L..4L).map { track(it) }
+    fun largeSongsKeepsFiveMegabytesAndUpFewestPlaysFirstThenBiggest() {
+        val allTracks = listOf(track(1), track(2, playCount = 3), track(3, playCount = 3), track(5, playCount = 0))
         val sizes = mapOf(
             location(1) to 4_999_999L,
             location(2) to 5_000_000L,
             location(3) to 9_000_000L,
+            location(5) to 6_000_000L,
         )
 
         val large = largeSongs(allTracks, sizes)
 
-        assertEquals(listOf(3L to 9_000_000L, 2L to 5_000_000L), large.map { (track, size) -> track.id to size })
+        assertEquals(
+            listOf(5L to 6_000_000L, 3L to 9_000_000L, 2L to 5_000_000L),
+            large.map { (track, size) -> track.id to size },
+        )
     }
 }

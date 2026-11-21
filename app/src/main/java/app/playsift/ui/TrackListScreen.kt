@@ -174,7 +174,14 @@ internal fun TrackRow(
 
 private fun rowTrailingText(track: PlayerTrack, list: LibraryList, today: LocalDate, sizeBytes: Long?) =
     when (list) {
-        LibraryList.Large -> sizeBytes?.let(::megabytesText).orEmpty()
-        LibraryList.MostPlayed -> if (track.playCount == 1) "1 play" else "${track.playCount} plays"
+        LibraryList.Large -> listOfNotNull(sizeBytes?.let(::megabytesText), playCountText(track.playCount)).joinToString(" \u00b7 ")
+        LibraryList.MostPlayed -> playCountText(track.playCount)
         else -> addedLabel(track.firstSeenAt, today)
+    }
+
+private fun playCountText(playCount: Int) =
+    when (playCount) {
+        0 -> "Never played"
+        1 -> "1 play"
+        else -> "$playCount plays"
     }

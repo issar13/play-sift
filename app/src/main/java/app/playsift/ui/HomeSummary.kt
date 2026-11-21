@@ -49,12 +49,12 @@ fun homeSummary(
     )
 }
 
-/** Songs of [LARGE_SONG_MINIMUM_BYTES] or more, biggest first. */
+/** Songs of [LARGE_SONG_MINIMUM_BYTES] or more: fewest plays first, then biggest first. */
 fun largeSongs(allTracks: List<PlayerTrack>, sizes: Map<FileLocation, Long>): List<Pair<PlayerTrack, Long>> =
     allTracks
         .mapNotNull { track -> track.fileLocation()?.let(sizes::get)?.let { sizeBytes -> track to sizeBytes } }
         .filter { (_, sizeBytes) -> sizeBytes >= LARGE_SONG_MINIMUM_BYTES }
-        .sortedByDescending { (_, sizeBytes) -> sizeBytes }
+        .sortedWith(compareBy<Pair<PlayerTrack, Long>> { (track, _) -> track.playCount }.thenByDescending { (_, sizeBytes) -> sizeBytes })
 
 /** Tracks without a known size (shared location, cue, stream) count as 0, so this is a lower bound. */
 private fun sizeOf(tracks: List<PlayerTrack>, sizes: Map<FileLocation, Long>): Long =
