@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -57,6 +58,7 @@ fun TrackListScreen(
             Button(
                 onClick = onMoveToTrash,
                 enabled = state.selectedIds.isNotEmpty() && !isPreparingTrash,
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError),
                 modifier = Modifier.fillMaxWidth().padding(16.dp),
             ) {
                 if (isPreparingTrash) {
@@ -84,31 +86,33 @@ private fun HistoryBanner(health: HistoryHealth, cutoffLabel: String) {
 }
 
 @Composable
-private fun TrackRow(
+internal fun TrackRow(
     track: PlayerTrack,
     list: LibraryList,
     today: LocalDate,
     isSelected: Boolean,
     onToggleSelected: () -> Unit,
+    sizeBytes: Long? = null,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        if (list == LibraryList.DeleteCandidates) {
+        if (list == LibraryList.DeleteCandidates || list == LibraryList.Large) {
             Checkbox(checked = isSelected, onCheckedChange = { onToggleSelected() })
         }
         Column(modifier = Modifier.weight(1f)) {
             Text(text = track.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1)
             Text(text = track.artist, style = MaterialTheme.typography.bodySmall, maxLines = 1)
         }
-        Text(text = rowTrailingText(track, list, today), style = MaterialTheme.typography.bodySmall)
+        Text(text = rowTrailingText(track, list, today, sizeBytes), style = MaterialTheme.typography.bodySmall)
     }
 }
 
-private fun rowTrailingText(track: PlayerTrack, list: LibraryList, today: LocalDate) =
+private fun rowTrailingText(track: PlayerTrack, list: LibraryList, today: LocalDate, sizeBytes: Long?) =
     when (list) {
+        LibraryList.Large -> sizeBytes?.let(::megabytesText).orEmpty()
         LibraryList.MostPlayed -> if (track.playCount == 1) "1 play" else "${track.playCount} plays"
         else -> addedLabel(track.firstSeenAt, today)
     }

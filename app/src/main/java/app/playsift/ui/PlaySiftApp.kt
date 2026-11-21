@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.content.pm.PackageManager
 import android.os.Build
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -48,13 +49,12 @@ import java.time.LocalDate
 import java.time.ZoneOffset
 import kotlinx.coroutines.launch
 
-private const val SETTINGS_TAB_LABEL = "Settings"
-
-private val listTabs = listOf(
+private val tabs = listOf(
     "Home" to Screen.Home,
     "Most played" to Screen.MostPlayed,
     "Never played" to Screen.NeverPlayed,
     "Delete" to Screen.Delete,
+    "Settings" to Screen.Settings,
 )
 
 private val mediaPermission =
@@ -68,7 +68,6 @@ fun PlaySiftApp(viewModel: LibraryViewModel) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
-    var isSettingsOpen by rememberSaveable { mutableStateOf(false) }
     val trashFlow by viewModel.trashFlow.collectAsState()
 
     val trashLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
@@ -88,6 +87,7 @@ fun PlaySiftApp(viewModel: LibraryViewModel) {
     var selectionAtPermissionRequest by rememberSaveable { mutableStateOf(longArrayOf()) }
     val prepareTrash = { selectedIds: Set<Long> -> scope.launch { viewModel.prepareTrash(selectedIds) } }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
+        viewModel.setFileAccess(isGranted)
         if (isGranted) {
             prepareTrash(selectionAtPermissionRequest.toSet())
         } else {
@@ -96,6 +96,31 @@ fun PlaySiftApp(viewModel: LibraryViewModel) {
             }
         }
     }
+
+    val moveSelectionToTrash: () -> Unit = {
+        val selectionNow = state.selectedIds
+        val hasPermission =
+            ContextCompat.checkSelfPermission(context, mediaPermission) == PackageManager.PERMISSION_GRANTED
+        if (hasPermission) {
+            prepareTrash(selectionNow)
+        } else {
+            selectionAtPermissionRequest = selectionNow.toLongArray()
+            permissionLauncher.launch(mediaPermission)
+        }
+    }
+
+    val fileAccessLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission(), viewModel::setFileAccess)
+    var hasAskedForFileAccess by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (ContextCompat.checkSelfPermission(context, mediaPermission) == PackageManager.PERMISSION_GRANTED) {
+            viewModel.setFileAccess(true)
+        } else if (!hasAskedForFileAccess) {
+            hasAskedForFileAccess = true
+            fileAccessLauncher.launch(mediaPermission)
+        }
+    }
+
+    BackHandler(enabled = state.screen == Screen.Large) { viewModel.showScreen(Screen.Home) }
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.onResume() }
 
@@ -124,23 +149,14 @@ fun PlaySiftApp(viewModel: LibraryViewModel) {
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
             NavigationBar {
-                listTabs.forEach { (label, screen) ->
+                tabs.forEach { (label, screen) ->
                     NavigationBarItem(
-                        selected = !isSettingsOpen && state.screen == screen,
-                        onClick = {
-                            isSettingsOpen = false
-                            viewModel.showScreen(screen)
-                        },
+                        selected = state.screen == screen || (screen == Screen.Home && state.screen == Screen.Large),
+                        onClick = { viewModel.showScreen(screen) },
                         icon = {},
                         label = { Text(label) },
                     )
                 }
-                NavigationBarItem(
-                    selected = isSettingsOpen,
-                    onClick = { isSettingsOpen = true },
-                    icon = {},
-                    label = { Text(SETTINGS_TAB_LABEL) },
-                )
             }
         },
     ) { contentPadding ->
@@ -153,24 +169,28 @@ fun PlaySiftApp(viewModel: LibraryViewModel) {
                     onRequestAccess = viewModel::requestPermission,
                     onCheckAgain = viewModel::refresh,
                 )
-                isSettingsOpen -> SettingsScreen(selected = state.cutoff, onSelect = viewModel::setCutoff)
+                state.screen == Screen.Home -> HomeScreen(
+                    state = state,
+                    onOpenDelete = { viewModel.showScreen(Screen.Delete) },
+                    onOpenLarge = { viewModel.showScreen(Screen.Large) },
+                    onAllowFileAccess = { fileAccessLauncher.launch(mediaPermission) },
+                )
+                state.screen == Screen.Settings -> SettingsScreen(selected = state.cutoff, onSelect = viewModel::setCutoff)
+                state.screen == Screen.Large -> LargeSongsScreen(
+                    state = state,
+                    onBack = { viewModel.showScreen(Screen.Home) },
+                    onToggleSelected = viewModel::toggleSelected,
+                    onSelectAll = viewModel::selectAll,
+                    isPreparingTrash = isPreparingTrash,
+                    onMoveToTrash = moveSelectionToTrash,
+                )
                 else -> TrackListScreen(
                     state = state,
                     today = LocalDate.now(ZoneOffset.UTC),
                     onToggleSelected = viewModel::toggleSelected,
                     onSelectAll = viewModel::selectAll,
                     isPreparingTrash = isPreparingTrash,
-                    onMoveToTrash = {
-                        val selectionNow = state.selectedIds
-                        val hasPermission =
-                            ContextCompat.checkSelfPermission(context, mediaPermission) == PackageManager.PERMISSION_GRANTED
-                        if (hasPermission) {
-                            prepareTrash(selectionNow)
-                        } else {
-                            selectionAtPermissionRequest = selectionNow.toLongArray()
-                            permissionLauncher.launch(mediaPermission)
-                        }
-                    },
+                    onMoveToTrash = moveSelectionToTrash,
                 )
             }
         }

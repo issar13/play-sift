@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -13,9 +15,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.unit.dp
 import app.playsift.R
 import app.playsift.files.NotRemovableReason
-import java.util.Locale
 
-private const val BYTES_PER_MEGABYTE = 1_000_000.0
 private val NOT_REMOVABLE_LIST_MAX_HEIGHT = 200.dp
 
 @Composable
@@ -25,11 +25,15 @@ fun TrashConfirmDialog(
     onDismiss: () -> Unit,
 ) {
     val songCount = plan.removable.size
-    val sizeText = String.format(Locale.ROOT, "%.1f MB", plan.totalSizeBytes / BYTES_PER_MEGABYTE)
+    val sizeText = megabytesText(plan.totalSizeBytes)
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = {
-            TextButton(onClick = onConfirm, enabled = songCount > 0) { Text("Move to trash") }
+            TextButton(
+                onClick = onConfirm,
+                enabled = songCount > 0,
+                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+            ) { Text("Move to trash") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
         text = {
