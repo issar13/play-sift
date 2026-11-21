@@ -28,6 +28,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -89,16 +90,35 @@ fun PlaySiftApp(viewModel: LibraryViewModel) {
         }
     }
 
+    val message by viewModel.message.collectAsState()
+    LaunchedEffect(message) {
+        message?.let { shownMessage ->
+            snackbarHostState.showSnackbar(shownMessage.text)
+            viewModel.messageShown()
+        }
+    }
+
+    var isFileAccessBlocked by rememberSaveable { mutableStateOf(false) }
+    val openAppSettings = {
+        context.startActivity(
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")),
+        )
+    }
     val isPreparingTrash by viewModel.isPreparingTrash.collectAsState()
     var selectionAtPermissionRequest by rememberSaveable { mutableStateOf(longArrayOf()) }
     val prepareTrash = { selectedIds: Set<Long> -> scope.launch { viewModel.prepareTrash(selectedIds) } }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
         viewModel.setFileAccess(isGranted)
+        isFileAccessBlocked = !isGranted && !ActivityCompat.shouldShowRequestPermissionRationale(context.findActivity(), mediaPermission)
         if (isGranted) {
             prepareTrash(selectionAtPermissionRequest.toSet())
         } else {
             scope.launch {
-                snackbarHostState.showSnackbar("Play Sift needs access to your music files to move them to the trash.")
+                val result = snackbarHostState.showSnackbar(
+                    message = "Play Sift needs access to your music files to move them to the trash.",
+                    actionLabel = if (isFileAccessBlocked) "Open settings" else null,
+                )
+                if (result == SnackbarResult.ActionPerformed) openAppSettings()
             }
         }
     }
@@ -107,15 +127,22 @@ fun PlaySiftApp(viewModel: LibraryViewModel) {
         val selectionNow = state.selectedIds
         val hasPermission =
             ContextCompat.checkSelfPermission(context, mediaPermission) == PackageManager.PERMISSION_GRANTED
-        if (hasPermission) {
-            prepareTrash(selectionNow)
-        } else {
-            selectionAtPermissionRequest = selectionNow.toLongArray()
-            permissionLauncher.launch(mediaPermission)
+        when {
+            hasPermission -> prepareTrash(selectionNow)
+            isFileAccessBlocked -> scope.launch {
+                val result = snackbarHostState.showSnackbar(
+                    message = "Play Sift needs access to your music files to move them to the trash.",
+                    actionLabel = "Open settings",
+                )
+                if (result == SnackbarResult.ActionPerformed) openAppSettings()
+            }
+            else -> {
+                selectionAtPermissionRequest = selectionNow.toLongArray()
+                permissionLauncher.launch(mediaPermission)
+            }
         }
     }
 
-    var isFileAccessBlocked by rememberSaveable { mutableStateOf(false) }
     val fileAccessLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
         viewModel.setFileAccess(isGranted)
         isFileAccessBlocked = !isGranted && !ActivityCompat.shouldShowRequestPermissionRationale(context.findActivity(), mediaPermission)
@@ -189,9 +216,7 @@ fun PlaySiftApp(viewModel: LibraryViewModel) {
                     onOpenLarge = { viewModel.showScreen(Screen.Large) },
                     onAllowFileAccess = {
                         if (isFileAccessBlocked) {
-                            context.startActivity(
-                                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")),
-                            )
+                            openAppSettings()
                         } else {
                             fileAccessLauncher.launch(mediaPermission)
                         }

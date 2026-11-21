@@ -1,7 +1,10 @@
 package app.playsift.ui
 
 import android.net.Uri
+import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.emptyPreferences
 import app.playsift.files.FileLocation
 import app.playsift.files.FileMatcher
 import app.playsift.files.FileSizes
@@ -17,6 +20,7 @@ import app.playsift.player.PlayerTrack
 import app.playsift.settings.CutoffOption
 import app.playsift.settings.CutoffSettings
 import java.io.File
+import java.io.IOException
 import java.time.Clock
 import java.time.Instant
 import java.time.Period
@@ -29,6 +33,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -95,18 +100,28 @@ private class FakeAccess(var accessState: AccessState) : Access {
     override fun openPlayer() = Unit
 }
 
-/** Every track becomes removable unless its id is in [notRemovableIds]. */
+/** Every track becomes removable unless its id is in [notRemovableIds] or it shares its file with another given track. */
 private class FakeMatcher(val notRemovableIds: Set<Long> = emptySet(), val sizeBytes: Long = 100) : FileMatcher {
     var matchedTracks: List<PlayerTrack> = emptyList()
     var gate: CompletableDeferred<Unit>? = null
     var matchCalls = 0
+    var failure: Throwable? = null
     override suspend fun match(tracks: List<PlayerTrack>): List<TrackFile> {
         matchCalls += 1
         gate?.await()
+        failure?.let { throw it }
         matchedTracks = tracks
+        val sharedFileKeys = tracks
+            .groupingBy { it.folderPath to it.fileName }
+            .eachCount()
+            .filterValues { it > 1 }
+            .keys
         return tracks.map {
-            if (it.id in notRemovableIds) TrackFile.NotRemovable(it, NotRemovableReason.NotFoundOnPhone)
-            else TrackFile.Removable(it, Uri.parse("content://media/${it.id}"), sizeBytes)
+            when {
+                it.id in notRemovableIds -> TrackFile.NotRemovable(it, NotRemovableReason.NotFoundOnPhone)
+                (it.folderPath to it.fileName) in sharedFileKeys -> TrackFile.NotRemovable(it, NotRemovableReason.AmbiguousMatch)
+                else -> TrackFile.Removable(it, Uri.parse("content://media/${it.id}"), sizeBytes)
+            }
         }
     }
 }
@@ -431,6 +446,64 @@ class LibraryViewModelTest {
         viewModel.clearSelection()
         viewModel.prepareTrash(selectedIds = setOf(1L, 2L))
         assertEquals(listOf(1L, 2L), matcher.matchedTracks.map { it.id })
+    }
+
+    @Test
+    fun fileSharedWithUnselectedTrackOutsideTheListIsNotRemovable() = runTest(dispatcher) {
+        val libraryWithHiddenOwner = FakeLibrary(
+            tracks = emptyList(),
+            summary = healthySummary,
+            tracksByList = mapOf(
+                LibraryList.DeleteCandidates to listOf(track(1)),
+                LibraryList.AllTracks to listOf(track(1), track(2), track(9).copy(fileName = "1.mp3")),
+            ),
+        )
+        val viewModel = viewModel(library = libraryWithHiddenOwner)
+        advanceUntilIdle()
+        viewModel.toggleSelected(1)
+        val plan = viewModel.prepareTrash()!!
+        assertEquals(emptyList<Long>(), plan.removable.map { it.track.id })
+        assertEquals(listOf(1L), plan.notRemovable.map { it.track.id })
+        assertEquals(NotRemovableReason.AmbiguousMatch, plan.notRemovable.single().reason)
+    }
+
+    @Test
+    fun matcherFailureShowsMessageAndTrashesNothing() = runTest(dispatcher) {
+        val matcher = FakeMatcher().also { it.failure = IllegalStateException("provider down") }
+        val viewModel = viewModel(matcher = matcher)
+        advanceUntilIdle()
+        viewModel.selectAll()
+        assertEquals(null, viewModel.prepareTrash())
+        assertEquals(UserMessage.TrashPreparationFailed, viewModel.message.value)
+        assertEquals(TrashFlow.Idle, viewModel.trashFlow.value)
+        assertEquals(false, viewModel.isPreparingTrash.value)
+        viewModel.messageShown()
+        assertEquals(null, viewModel.message.value)
+    }
+
+    @Test
+    fun cutoffSaveFailureShowsMessage() = runTest(dispatcher) {
+        val failingDataStore = object : DataStore<Preferences> {
+            override val data = flowOf(emptyPreferences())
+            override suspend fun updateData(transform: suspend (Preferences) -> Preferences): Preferences =
+                throw IOException("disk full")
+        }
+        val viewModel = LibraryViewModel(FakeLibrary((1L..3L).map(::track), healthySummary), FakeAccess(AccessState.Ready), FakeMatcher(), FakeFileSizes(), CutoffSettings(failingDataStore), clock)
+        advanceUntilIdle()
+        viewModel.setCutoff(CutoffOption.SixMonths)
+        advanceUntilIdle()
+        assertEquals(UserMessage.CutoffNotSaved, viewModel.message.value)
+        assertEquals(CutoffOption.SixMonths, viewModel.state.value.cutoff)
+    }
+
+    @Test
+    fun largeScreenFlagsUnavailableSizesInsteadOfEmptyList() = runTest(dispatcher) {
+        val fileSizes = FakeFileSizes(largeSizes).also { it.failure = SecurityException("no media access") }
+        val viewModel = viewModel(library = largeLibrary, fileSizes = fileSizes, startScreen = Screen.Large)
+        viewModel.setFileAccess(true)
+        advanceUntilIdle()
+        assertTrue(viewModel.state.value.sizesUnavailable)
+        assertTrue(viewModel.state.value.tracks.isEmpty())
     }
 
     private fun largeTrack(id: Long, fileName: String) = track(id).copy(fileName = fileName)

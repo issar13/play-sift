@@ -61,14 +61,15 @@ class TrackFileMatcher(private val contentResolver: ContentResolver) : FileMatch
     }
 
     private fun queryMediaStore(track: PlayerTrack, relativePath: String): TrackFile =
-        contentResolver
-            .query(
+        checkNotNull(
+            contentResolver.query(
                 audioCollection,
                 arrayOf(MediaStore.Audio.Media._ID, MediaStore.Audio.Media.SIZE),
                 "${MediaStore.Audio.Media.RELATIVE_PATH} = ? AND ${MediaStore.Audio.Media.DISPLAY_NAME} = ?",
                 arrayOf(relativePath, track.fileName),
                 null,
-            )!!
+            ),
+        ) { "MediaStore returned no cursor" }
             .use { cursor ->
                 when (cursor.count) {
                     0 -> TrackFile.NotRemovable(track, NotRemovableReason.NotFoundOnPhone)

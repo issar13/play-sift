@@ -22,7 +22,13 @@ data class LibraryUiState(
     val home: HomeSummary? = null,
     val sizesById: Map<Long, Long> = emptyMap(),
     val hasFileAccess: Boolean = false,
+    val sizesUnavailable: Boolean = false,
 )
+
+enum class UserMessage(val text: String) {
+    TrashPreparationFailed("Couldn't check your files. Nothing was moved to the trash. Try again."),
+    CutoffNotSaved("Couldn't save your cutoff. It will reset when you reopen the app."),
+}
 
 data class TrashPlan(
     val removable: List<TrackFile.Removable>,

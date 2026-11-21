@@ -29,8 +29,9 @@ class FakeMediaStoreProvider : ContentProvider() {
         selection: String?,
         selectionArgs: Array<String>?,
         sortOrder: String?,
-    ): Cursor {
+    ): Cursor? {
         queryCount += 1
+        if (returnsNullCursor) return null
         return database.query("audio", projection, selection, selectionArgs, null, null, sortOrder)
     }
 
@@ -41,6 +42,7 @@ class FakeMediaStoreProvider : ContentProvider() {
 
     companion object {
         var queryCount = 0
+        var returnsNullCursor = false
         lateinit var database: SQLiteDatabase
     }
 }
@@ -52,6 +54,7 @@ class TrackFileMatcherTest {
     @Before
     fun setUp() {
         FakeMediaStoreProvider.queryCount = 0
+        FakeMediaStoreProvider.returnsNullCursor = false
         FakeMediaStoreProvider.database = SQLiteDatabase.create(null)
         FakeMediaStoreProvider.database.apply {
             execSQL("CREATE TABLE audio (_id INTEGER PRIMARY KEY, relative_path TEXT, _display_name TEXT, _size INTEGER)")
@@ -180,5 +183,12 @@ class TrackFileMatcherTest {
         val file = matcher.match(listOf(track("Don't Stop.mp3"))).single() as TrackFile.Removable
 
         assertEquals(5_000L, file.sizeBytes)
+    }
+
+    @Test(expected = IllegalStateException::class)
+    fun nullCursorFailsInsteadOfCrashingOnNullAssertion() = runTest {
+        FakeMediaStoreProvider.returnsNullCursor = true
+
+        matcher.match(listOf(track("a.mp3")))
     }
 }

@@ -69,6 +69,9 @@ class LibraryViewModel(
     private val mutableTrashFlow = MutableStateFlow<TrashFlow>(TrashFlow.Idle)
     val trashFlow: StateFlow<TrashFlow> = mutableTrashFlow
 
+    private val mutableMessage = MutableStateFlow<UserMessage?>(null)
+    val message: StateFlow<UserMessage?> = mutableMessage
+
     private var isCurrentBatchAwaitingLaunch = false
 
     init {
@@ -98,8 +101,20 @@ class LibraryViewModel(
     fun setCutoff(option: CutoffOption) {
         savedCutoffJob.cancel()
         mutableState.update { it.copy(cutoff = option) }
-        viewModelScope.launch { settings.setCutoff(option) }
+        viewModelScope.launch {
+            try {
+                settings.setCutoff(option)
+            } catch (exception: CancellationException) {
+                throw exception
+            } catch (_: Exception) {
+                mutableMessage.value = UserMessage.CutoffNotSaved
+            }
+        }
         reload()
+    }
+
+    fun messageShown() {
+        mutableMessage.value = null
     }
 
     fun toggleSelected(id: Long) =
@@ -114,13 +129,20 @@ class LibraryViewModel(
 
     /**
      * Matches [selectedIds] (the ticks as they were when the user tapped, by default the current ones)
-     * to phone files and opens the confirmation. Returns null when a preparation is already running.
+     * to phone files and opens the confirmation. A file is only removable when no other song in the whole
+     * library points at it, so unticked songs never lose their file. Returns null when a preparation is
+     * already running or failed; a failure sets [message] and trashes nothing.
      */
     suspend fun prepareTrash(selectedIds: Set<Long> = mutableState.value.selectedIds): TrashPlan? {
         if (!mutableIsPreparingTrash.compareAndSet(expect = false, update = true)) return null
         try {
             val selectedTracks = mutableState.value.tracks.filter { it.id in selectedIds }
-            val files = matcher.match(selectedTracks)
+            val selectedFileKeys = selectedTracks.map { it.folderPath to it.fileName }.toSet()
+            val sharingTracks = library
+                .tracks(LibraryList.AllTracks, mutableState.value.cutoff.period, clock.instant())
+                .filter { (it.folderPath to it.fileName) in selectedFileKeys }
+            val tracksToMatch = (selectedTracks + sharingTracks).distinctBy { it.id }
+            val files = matcher.match(tracksToMatch).filter { it.track.id in selectedIds }
             val removable = files.filterIsInstance<TrackFile.Removable>()
             val plan = TrashPlan(
                 removable = removable,
@@ -130,6 +152,11 @@ class LibraryViewModel(
             )
             mutableTrashFlow.value = TrashFlow.Confirming(plan)
             return plan
+        } catch (exception: CancellationException) {
+            throw exception
+        } catch (_: Exception) {
+            mutableMessage.value = UserMessage.TrashPreparationFailed
+            return null
         } finally {
             mutableIsPreparingTrash.value = false
         }
@@ -211,6 +238,7 @@ class LibraryViewModel(
                     tracks = content.tracks,
                     home = content.home,
                     sizesById = content.sizesById,
+                    sizesUnavailable = content.sizesUnavailable,
                     historyHealth = health,
                     selectedIds = emptySet(),
                     isLoading = false,
@@ -222,12 +250,17 @@ class LibraryViewModel(
             throw exception
         } catch (_: Exception) {
             mutableState.update {
-                it.copy(access = accessRead ?: it.access, tracks = emptyList(), home = null, sizesById = emptyMap(), selectedIds = emptySet(), isLoading = false, loadFailed = true)
+                it.copy(access = accessRead ?: it.access, tracks = emptyList(), home = null, sizesById = emptyMap(), sizesUnavailable = false, selectedIds = emptySet(), isLoading = false, loadFailed = true)
             }
         }
     }
 
-    private class ScreenContent(val tracks: List<PlayerTrack>, val home: HomeSummary?, val sizesById: Map<Long, Long>)
+    private class ScreenContent(
+        val tracks: List<PlayerTrack>,
+        val home: HomeSummary?,
+        val sizesById: Map<Long, Long>,
+        val sizesUnavailable: Boolean = false,
+    )
 
     private suspend fun loadScreenContent(current: LibraryUiState, summary: HistorySummary, now: Instant): ScreenContent {
         val period = current.cutoff.period
@@ -245,11 +278,13 @@ class LibraryViewModel(
             )
             // Sizes and tracks come from two providers, so the large songs are filtered here instead of in SQL.
             Screen.Large -> {
-                val largeSongList = largeSongs(library.tracks(LibraryList.AllTracks, period, now), sizesOrNull(current.hasFileAccess).orEmpty())
+                val sizes = sizesOrNull(current.hasFileAccess)
+                val largeSongList = largeSongs(library.tracks(LibraryList.AllTracks, period, now), sizes.orEmpty())
                 ScreenContent(
                     tracks = largeSongList.map { (track, _) -> track },
                     home = null,
                     sizesById = largeSongList.associate { (track, sizeBytes) -> track.id to sizeBytes },
+                    sizesUnavailable = sizes == null,
                 )
             }
             Screen.Settings -> ScreenContent(emptyList(), null, emptyMap())
@@ -286,7 +321,7 @@ class LibraryViewModel(
         }
 
     private fun showEmpty(accessState: AccessState) =
-        mutableState.update { it.copy(access = accessState, tracks = emptyList(), home = null, sizesById = emptyMap(), selectedIds = emptySet(), isLoading = false) }
+        mutableState.update { it.copy(access = accessState, tracks = emptyList(), home = null, sizesById = emptyMap(), sizesUnavailable = false, selectedIds = emptySet(), isLoading = false) }
 
     companion object {
         fun factory(application: Application): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
