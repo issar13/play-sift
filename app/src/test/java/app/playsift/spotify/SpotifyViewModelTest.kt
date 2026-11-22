@@ -182,6 +182,73 @@ class SpotifyViewModelTest {
     }
 
     @Test
+    fun signInStoresTheClientIdItOpenedThePageWith() = runTest(dispatcher) {
+        tokenStore.stored = null
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.signIn { }
+        advanceUntilIdle()
+
+        assertEquals("built-in", tokenStore.pending!!.clientId)
+    }
+
+    @Test
+    fun theCodeIsExchangedWithTheClientIdFromSignInTime() = runTest(dispatcher) {
+        tokenStore.stored = null
+        tokenStore.pending = PendingAuthorization("verifier", "expected-state", clientId = "client-at-sign-in")
+        val viewModel = viewModel()
+        advanceUntilIdle()
+        viewModel.setClientIdOverride("changed-while-browser-was-open")
+        advanceUntilIdle()
+
+        viewModel.onAuthCallback(code = "code", state = "expected-state", error = null)
+        advanceUntilIdle()
+
+        assertEquals(Triple("client-at-sign-in", "code", "verifier"), accounts.exchangedWith)
+    }
+
+    @Test
+    fun aSuccessfulSignInClearsThePendingAuthorization() = runTest(dispatcher) {
+        tokenStore.stored = null
+        tokenStore.pending = PendingAuthorization("verifier", "expected-state")
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.onAuthCallback(code = "code", state = "expected-state", error = null)
+        advanceUntilIdle()
+
+        assertEquals(null, tokenStore.pending)
+    }
+
+    @Test
+    fun aFailedSignInKeepsThePendingAuthorizationForARetry() = runTest(dispatcher) {
+        tokenStore.stored = null
+        tokenStore.pending = PendingAuthorization("verifier", "expected-state")
+        val viewModel = viewModel()
+        advanceUntilIdle()
+        accounts.exchangeFailure = SpotifyAuthException("bad client", status = 400)
+
+        viewModel.onAuthCallback(code = "code", state = "expected-state", error = null)
+        advanceUntilIdle()
+
+        assertNotNull(tokenStore.pending)
+    }
+
+    @Test
+    fun aFailedSendBecauseTheSignInIsGoneShowsSignedOut() = runTest(dispatcher) {
+        val viewModel = viewModel()
+        advanceUntilIdle()
+        assertTrue(viewModel.state.value.isSignedIn)
+
+        tokenStore.stored = null
+        store.save(savedSend().copy(failureMessage = "Spotify no longer accepts the sign-in. Sign out and sign in again."))
+        advanceUntilIdle()
+
+        assertEquals(false, viewModel.state.value.isSignedIn)
+    }
+
+    @Test
     fun aDeniedSignInShowsAMessage() = runTest(dispatcher) {
         tokenStore.stored = null
         val viewModel = viewModel()
@@ -628,8 +695,40 @@ class SpotifyViewModelTest {
         advanceUntilIdle()
 
         val picker = viewModel.state.value.picker!!
-        assertEquals(failureText(SpotifyHttpException(429, "slow down")), picker.errorMessage)
+        assertEquals(pickerFailureText(SpotifyHttpException(429, "slow down")), picker.errorMessage)
         assertTrue(picker.options.isEmpty())
+    }
+
+    @Test
+    fun aRateLimitInThePickerSaysToTryAgainAfterTheWait() = runTest(dispatcher) {
+        store.save(savedSend(notFound = listOf(lostSong)))
+        val viewModel = viewModel()
+        advanceUntilIdle()
+        api.failure = SpotifyHttpException(429, "slow down", retryAfterSeconds = 90)
+
+        viewModel.openPicker(lostSong)
+        advanceUntilIdle()
+
+        assertEquals(
+            "Spotify asked Play Sift to pause for about 2 minutes. Try again after that.",
+            viewModel.state.value.picker!!.errorMessage,
+        )
+    }
+
+    @Test
+    fun aRateLimitInThePickerWithoutAWaitSaysAFewMinutes() = runTest(dispatcher) {
+        store.save(savedSend(notFound = listOf(lostSong)))
+        val viewModel = viewModel()
+        advanceUntilIdle()
+        api.failure = SpotifyHttpException(429, "slow down")
+
+        viewModel.openPicker(lostSong)
+        advanceUntilIdle()
+
+        assertEquals(
+            "Spotify asked Play Sift to pause for about a few minutes. Try again after that.",
+            viewModel.state.value.picker!!.errorMessage,
+        )
     }
 
     @Test
@@ -694,6 +793,35 @@ class SpotifyViewModelTest {
 
         assertEquals(listOf(2L), done(viewModel).result.added.map { it.track.id })
         assertEquals(listOf(3L), done(viewModel).unsure.map { it.track.id })
+    }
+
+    @Test
+    fun aSecondTapOnAddItForTheLastUnsureSongPublishesOnce() = runTest(dispatcher) {
+        store.save(savedSend(playlist = null, unsure = listOf(unsureSong(2, "Maybe"))))
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.confirmUnsure(2)
+        viewModel.confirmUnsure(2)
+        viewModel.skipUnsure(2)
+        advanceUntilIdle()
+
+        assertEquals(1, api.createdNames.size)
+        assertEquals(listOf(2L), done(viewModel).result.added.map { it.track.id })
+        assertTrue(done(viewModel).unsure.isEmpty())
+    }
+
+    @Test
+    fun songsMovedToTrashLeaveTheOffer() = runTest(dispatcher) {
+        store.save(savedSend(added = listOf(matchedSong(1, "One"), matchedSong(2, "Two"))))
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.songsMovedToTrash(setOf(1L))
+        advanceUntilIdle()
+
+        assertEquals(listOf(2L), done(viewModel).offer.map { it.track.id })
+        assertEquals(listOf(1L, 2L), done(viewModel).result.added.map { it.track.id })
     }
 
     @Test

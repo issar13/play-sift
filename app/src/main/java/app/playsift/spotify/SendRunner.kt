@@ -82,10 +82,16 @@ fun failureText(exception: Exception): String =
         exception.status == STATUS_FORBIDDEN ->
             "Spotify refused the request. Make sure your account is added to the app in the Spotify developer dashboard."
         exception.status == STATUS_TOO_MANY_REQUESTS ->
-            "Spotify asked Play Sift to pause for about ${exception.retryAfterSeconds?.let { minutesText(minutesToWait(it)) } ?: "a few minutes"}. " +
-                "Songs matched so far are saved, so sending again picks up where this stopped."
+            "${pauseText(exception)} Songs matched so far are saved, so sending again picks up where this stopped."
         else -> "Spotify answered with an error (${exception.status}). Try again in a minute."
     }
+
+/** For the picker, where nothing is being sent: a 429 only says how long to wait. */
+fun pickerFailureText(exception: Exception): String =
+    if (exception is SpotifyHttpException && exception.status == STATUS_TOO_MANY_REQUESTS) "${pauseText(exception)} Try again after that." else failureText(exception)
+
+private fun pauseText(exception: SpotifyHttpException) =
+    "Spotify asked Play Sift to pause for about ${exception.retryAfterSeconds?.let { minutesText(minutesToWait(it)) } ?: "a few minutes"}."
 
 private const val SECONDS_PER_MINUTE = 60L
 

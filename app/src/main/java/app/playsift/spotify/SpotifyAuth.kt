@@ -21,12 +21,16 @@ const val SPOTIFY_SCOPES = "playlist-modify-private playlist-modify-public playl
 
 private val ACCOUNTS_URL = "https://accounts.spotify.com/".toHttpUrl()
 
-/** Kept between opening the browser and the callback, so it survives the app being closed in the meantime. */
-data class PendingAuthorization(val verifier: String, val state: String)
+/**
+ * Kept between opening the browser and the callback, so it survives the app being closed in the meantime.
+ * [clientId] is the one the sign-in page was opened with; it is null in data saved before it was stored.
+ */
+data class PendingAuthorization(val verifier: String, val state: String, val clientId: String? = null)
 
 data class SpotifyTokens(val accessToken: String, val refreshToken: String, val expiresAt: Instant)
 
-class SpotifyAuthException(message: String) : Exception(message)
+/** [status] is the token endpoint's HTTP status. */
+class SpotifyAuthException(message: String, val status: Int? = null) : Exception(message)
 
 fun authorizationUrl(clientId: String, challenge: String, state: String, baseUrl: HttpUrl = ACCOUNTS_URL): String =
     baseUrl.newBuilder()
@@ -88,7 +92,7 @@ class OkHttpSpotifyAccounts(
         withContext(Dispatchers.IO) {
             val request = Request.Builder().url(baseUrl.newBuilder().addPathSegments("api/token").build()).post(body).build()
             client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) throw SpotifyAuthException("Spotify sign-in failed with status ${response.code}")
+                if (!response.isSuccessful) throw SpotifyAuthException("Spotify sign-in failed with status ${response.code}", response.code)
                 val tokenResponse = json.decodeFromString<TokenResponse>(response.body.string())
                 SpotifyTokens(
                     accessToken = tokenResponse.accessToken,
@@ -107,6 +111,8 @@ interface TokenStore {
     suspend fun pendingAuthorization(): PendingAuthorization?
 
     suspend fun savePendingAuthorization(pending: PendingAuthorization)
+
+    suspend fun clearPendingAuthorization()
 
     /** Removes the tokens and any pending sign-in. */
     suspend fun clear()
@@ -131,8 +137,8 @@ class SpotifySession(
     suspend fun isSignedIn(): Boolean = store.tokens() != null
 
     /** Saves under [refreshLock], so a refresh that started earlier cannot overwrite the new sign-in afterwards. */
-    suspend fun completeSignIn(code: String, verifier: String) {
-        val tokens = accounts.exchangeCode(clientId(), code, verifier)
+    suspend fun completeSignIn(code: String, verifier: String, signInClientId: String? = null) {
+        val tokens = accounts.exchangeCode(signInClientId ?: clientId(), code, verifier)
         refreshLock.withLock { store.saveTokens(tokens) }
     }
 
@@ -153,11 +159,21 @@ class SpotifySession(
             if (stored.accessToken != staleToken) {
                 stored.accessToken
             } else {
-                accounts.refresh(clientId(), stored.refreshToken).also { store.saveTokens(it) }.accessToken
+                refreshedTokens(stored).also { store.saveTokens(it) }.accessToken
             }
+        }
+
+    /** Spotify answering 400 or 401 means the refresh token is revoked or expired: the tokens are cleared so the user signs in again. */
+    private suspend fun refreshedTokens(stored: SpotifyTokens): SpotifyTokens =
+        try {
+            accounts.refresh(clientId(), stored.refreshToken)
+        } catch (exception: SpotifyAuthException) {
+            if (exception.status in REFUSED_REFRESH_STATUSES) store.clear()
+            throw exception
         }
 
     private companion object {
         val EXPIRY_MARGIN: Duration = Duration.ofSeconds(60)
+        val REFUSED_REFRESH_STATUSES = listOf(400, 401)
     }
 }

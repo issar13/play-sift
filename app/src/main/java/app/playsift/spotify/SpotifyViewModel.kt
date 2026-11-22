@@ -59,6 +59,7 @@ class SpotifyViewModel(
             combine(store.saved, scheduler.state) { saved, work -> saved to work }.collect { (saved, work) ->
                 val stage = stageFor(saved, work)
                 mutableState.update { it.copy(stage = stage) }
+                if (stage is SpotifyStage.Failed) refreshSignInState()
             }
         }
     }
@@ -68,7 +69,7 @@ class SpotifyViewModel(
         viewModelScope.launch {
             val effectiveClientId = clientId.effective()
             if (effectiveClientId.isBlank()) return@launch
-            val pending = PendingAuthorization(verifier = newCodeVerifier(), state = newAuthorizationState())
+            val pending = PendingAuthorization(verifier = newCodeVerifier(), state = newAuthorizationState(), clientId = effectiveClientId)
             tokenStore.savePendingAuthorization(pending)
             openBrowser(authorizationUrl(effectiveClientId, codeChallengeFor(pending.verifier), pending.state))
         }
@@ -83,7 +84,8 @@ class SpotifyViewModel(
                 return@launch
             }
             try {
-                session.completeSignIn(code, pending.verifier)
+                session.completeSignIn(code, pending.verifier, pending.clientId)
+                tokenStore.clearPendingAuthorization()
                 refreshSignInState()
             } catch (exception: CancellationException) {
                 throw exception
@@ -273,7 +275,7 @@ class SpotifyViewModel(
                 } catch (exception: CancellationException) {
                     throw exception
                 } catch (exception: Exception) {
-                    mutableState.update { it.copy(picker = it.picker?.copy(errorMessage = failureText(exception))) }
+                    mutableState.update { it.copy(picker = it.picker?.copy(errorMessage = pickerFailureText(exception))) }
                 }
             }
         }
@@ -285,7 +287,7 @@ class SpotifyViewModel(
         } catch (exception: CancellationException) {
             throw exception
         } catch (exception: Exception) {
-            PickerState(track, isLoading = false, errorMessage = failureText(exception))
+            PickerState(track, isLoading = false, errorMessage = pickerFailureText(exception))
         }
 
     private suspend fun addedByHand(saved: SavedSend, track: PlayerTrack, option: SpotifyTrack): SavedSend {
@@ -316,6 +318,17 @@ class SpotifyViewModel(
         }
     }
 
+    /** Takes songs Play Sift just moved to the trash off the offer, so they are not listed again. */
+    fun songsMovedToTrash(trackIds: Set<Long>) {
+        if (trackIds.isEmpty()) return
+        viewModelScope.launch {
+            decisionLock.withLock {
+                val saved = store.saved.first() ?: return@launch
+                store.save(saved.copy(movedToTrashIds = saved.movedToTrashIds + trackIds))
+            }
+        }
+    }
+
     fun toggleOffered(trackId: Long) = updateDone { done ->
         done.copy(selectedIds = if (trackId in done.selectedIds) done.selectedIds - trackId else done.selectedIds + trackId)
     }
@@ -337,7 +350,7 @@ class SpotifyViewModel(
         }
 
     private suspend fun doneStage(saved: SavedSend): SpotifyStage.Done {
-        val offer = offerFor(saved.result)
+        val offer = offerFor(saved)
         val keptSelection = (mutableState.value.stage as? SpotifyStage.Done)?.selectedIds.orEmpty()
         return SpotifyStage.Done(saved.result, saved.unsure, offer, selectedIds = keptSelection.intersect(offer.map { it.track.id }.toSet()))
     }
@@ -356,6 +369,7 @@ class SpotifyViewModel(
                         throw exception
                     } catch (exception: Exception) {
                         showMessage(failureText(exception))
+                        refreshSignInState()
                     }
                 }
             } finally {
@@ -375,9 +389,9 @@ class SpotifyViewModel(
             else -> saved
         }
 
-    private suspend fun offerFor(result: SendResult): List<OfferedSong> {
+    private suspend fun offerFor(saved: SavedSend): List<OfferedSong> {
         val sizes = knownSizes()
-        return trashOffer(result).map { track -> OfferedSong(track, track.fileLocation()?.let(sizes::get)) }
+        return trashOffer(saved.result).filterNot { it.id in saved.movedToTrashIds }.map { track -> OfferedSong(track, track.fileLocation()?.let(sizes::get)) }
     }
 
     /** Sizes are display only, so a failed read shows the songs without sizes. */

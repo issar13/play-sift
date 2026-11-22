@@ -38,6 +38,8 @@ data class SavedSend(
     val failureMessage: String? = null,
     val playerPlaylistId: Long? = null,
     val playerPlaylistName: String? = null,
+    /** Songs Play Sift moved to the trash after this send; they are no longer offered. */
+    val movedToTrashIds: Set<Long> = emptySet(),
 ) {
     val source: SendSource get() = sourceFor(choice, topCount, playerPlaylistId, playerPlaylistName)
 }

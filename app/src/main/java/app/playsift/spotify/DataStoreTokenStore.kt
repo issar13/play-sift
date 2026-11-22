@@ -15,7 +15,7 @@ import kotlinx.serialization.json.Json
 private data class StoredTokens(val accessToken: String, val refreshToken: String, val expiresAtEpochMillis: Long)
 
 @Serializable
-private data class StoredPending(val verifier: String, val state: String)
+private data class StoredPending(val verifier: String, val state: String, val clientId: String? = null)
 
 /** Tokens and the pending sign-in sit in DataStore, encrypted with [cipher]; a value the key cannot open counts as signed out. */
 class DataStoreTokenStore(
@@ -34,11 +34,15 @@ class DataStoreTokenStore(
 
     override suspend fun pendingAuthorization(): PendingAuthorization? =
         readDecrypted(PENDING_KEY)?.let { text ->
-            Json.decodeFromString<StoredPending>(text).let { stored -> PendingAuthorization(stored.verifier, stored.state) }
+            Json.decodeFromString<StoredPending>(text).let { stored -> PendingAuthorization(stored.verifier, stored.state, stored.clientId) }
         }
 
     override suspend fun savePendingAuthorization(pending: PendingAuthorization) =
-        writeEncrypted(PENDING_KEY, Json.encodeToString(StoredPending(pending.verifier, pending.state)))
+        writeEncrypted(PENDING_KEY, Json.encodeToString(StoredPending(pending.verifier, pending.state, pending.clientId)))
+
+    override suspend fun clearPendingAuthorization() {
+        dataStore.edit { preferences -> preferences.remove(PENDING_KEY) }
+    }
 
     override suspend fun clear() {
         dataStore.edit { preferences ->
