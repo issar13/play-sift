@@ -31,13 +31,25 @@ data class SpotifyUiState(
     val isSignedIn: Boolean,
     val userName: String?,
     val choice: SourceChoice,
-    val topCount: Int,
+    /** What the user typed for how many top songs; empty while editing, so it is parsed only when sending. */
+    val topCountText: String,
     val playlistName: String,
     val tickedTracks: List<PlayerTrack>,
     val stage: SpotifyStage,
     val message: String? = null,
 ) {
     val hasClientId: Boolean get() = !builtInClientIdMissing || clientIdOverride.isNotBlank()
+
+    /** The typed count when it is a number above zero. */
+    val topCount: Int? get() = topCountText.toIntOrNull()?.takeIf { it > 0 }
+
+    val canSend: Boolean get() = choice != SourceChoice.TopPlayed || topCount != null
 }
 
 const val DEFAULT_TOP_COUNT = 100
+
+const val MAX_TOP_COUNT_DIGITS = 4
+const val MAX_TOP_COUNT = 9999
+
+/** Keeps digits only, at most [MAX_TOP_COUNT_DIGITS] of them. */
+fun topCountTextFrom(input: String): String = input.filter(Char::isDigit).take(MAX_TOP_COUNT_DIGITS)

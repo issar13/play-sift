@@ -26,6 +26,7 @@ class SpotifyViewModel(
     private val fileSizes: FileSizes,
     private val store: SendStore,
     private val scheduler: SendScheduler,
+    private val playedSongCount: suspend () -> Int,
     private val builtInClientId: String,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(
@@ -35,7 +36,7 @@ class SpotifyViewModel(
             isSignedIn = false,
             userName = null,
             choice = SourceChoice.TopPlayed,
-            topCount = DEFAULT_TOP_COUNT,
+            topCountText = DEFAULT_TOP_COUNT.toString(),
             playlistName = SendSource.TopPlayed(DEFAULT_TOP_COUNT).defaultName,
             tickedTracks = emptyList(),
             stage = SpotifyStage.Setup,
@@ -109,10 +110,23 @@ class SpotifyViewModel(
     }
 
     fun chooseSource(choice: SourceChoice) =
-        mutableState.update { it.copy(choice = choice, playlistName = sourceFor(choice, it.topCount).defaultName) }
+        mutableState.update { it.copy(choice = choice, playlistName = sourceFor(choice, it.topCount ?: DEFAULT_TOP_COUNT).defaultName) }
 
-    fun setTopCount(count: Int) =
-        mutableState.update { it.copy(topCount = count, playlistName = if (it.choice == SourceChoice.TopPlayed) SendSource.TopPlayed(count).defaultName else it.playlistName) }
+    fun setTopCountText(input: String) = mutableState.update { withTopCountText(it, topCountTextFrom(input)) }
+
+    /** The "All" chip: the number of songs that have been played, at most [MAX_TOP_COUNT]. */
+    fun useAllPlayedCount() {
+        viewModelScope.launch {
+            val count = playedSongCount().coerceAtMost(MAX_TOP_COUNT)
+            mutableState.update { withTopCountText(it, count.toString()) }
+        }
+    }
+
+    private fun withTopCountText(current: SpotifyUiState, text: String): SpotifyUiState {
+        val typed = current.copy(topCountText = text)
+        val count = typed.topCount
+        return if (current.choice == SourceChoice.TopPlayed && count != null) typed.copy(playlistName = SendSource.TopPlayed(count).defaultName) else typed
+    }
 
     fun setPlaylistName(name: String) = mutableState.update { it.copy(playlistName = name) }
 
@@ -129,9 +143,10 @@ class SpotifyViewModel(
     /** Hands the send to the background worker; only one send runs at a time. */
     fun send() {
         val current = mutableState.value
+        if (!current.canSend) return
         val request = SendRequest(
             choice = current.choice,
-            topCount = current.topCount,
+            topCount = current.topCount ?: DEFAULT_TOP_COUNT,
             playlistName = current.playlistName,
             tickedTracks = if (current.choice == SourceChoice.TickedSongs) current.tickedTracks else emptyList(),
         )

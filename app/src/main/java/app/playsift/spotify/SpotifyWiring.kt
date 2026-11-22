@@ -12,6 +12,7 @@ import app.playsift.history.mergeHistory
 import app.playsift.history.roomPlayHistory
 import app.playsift.player.LibraryList
 import app.playsift.player.PlayerLibrary
+import app.playsift.player.PlayerTrack
 import app.playsift.settings.settingsDataStore
 import java.time.Clock
 import java.time.Period
@@ -30,13 +31,18 @@ class SpotifyComponents private constructor(private val context: Context) {
     val publisher = PlaylistPublisher(api, dao)
     val sendStore: SendStore = DataStoreSendStore(context.settingsDataStore)
 
+    private val library by lazy { PlayerLibrary(context.contentResolver) }
+    private val history by lazy { roomPlayHistory(context) }
+
+    suspend fun loadMergedTracks(): List<PlayerTrack> {
+        val playerTracks = library.tracks(LibraryList.AllTracks, Period.ZERO, clock.instant())
+        return mergeHistory(playerTracks, history.record(playerTracks))
+    }
+
+    suspend fun playedSongCount(): Int = loadMergedTracks().count { it.playCount > 0 }
+
     val sendServices: SendServices by lazy {
-        val library = PlayerLibrary(context.contentResolver)
-        val history = roomPlayHistory(context)
-        val runner = SendRunner(matcher, publisher) {
-            val playerTracks = library.tracks(LibraryList.AllTracks, Period.ZERO, clock.instant())
-            mergeHistory(playerTracks, history.record(playerTracks))
-        }
+        val runner = SendRunner(matcher, publisher, ::loadMergedTracks)
         SendServices(runner, sendStore, SendNotifications(context))
     }
 
@@ -63,6 +69,7 @@ fun spotifyViewModelFactory(application: Application): ViewModelProvider.Factory
             fileSizes = MediaStoreFileSizes(application.contentResolver),
             store = components.sendStore,
             scheduler = WorkManagerSendScheduler(WorkManager.getInstance(application), components.sendStore),
+            playedSongCount = components::playedSongCount,
             builtInClientId = BuildConfig.SPOTIFY_CLIENT_ID,
         ) as T
     }

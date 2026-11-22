@@ -67,6 +67,7 @@ class SpotifyViewModelTest {
             fileSizes = fileSizes,
             store = store,
             scheduler = scheduler,
+            playedSongCount = { 42 },
             builtInClientId = builtInClientId,
         )
     }
@@ -189,7 +190,7 @@ class SpotifyViewModelTest {
     fun sendingHandsTheChosenSourceToTheBackgroundWork() = runTest(dispatcher) {
         val viewModel = viewModel()
         advanceUntilIdle()
-        viewModel.setTopCount(25)
+        viewModel.setTopCountText("25")
         viewModel.setPlaylistName("Mine")
 
         viewModel.send()
@@ -370,5 +371,41 @@ class SpotifyViewModelTest {
 
         assertEquals(listOf("Maybe"), done(viewModel).unsure.map { it.track.title })
         assertEquals(listOf("Sure"), done(viewModel).result.added.map { it.track.title })
+    }
+
+    @Test
+    fun theTopCountCanBeEmptiedAndOnlyKeepsFourDigits() = runTest(dispatcher) {
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.setTopCountText("")
+        assertEquals("", viewModel.state.value.topCountText)
+        assertEquals(false, viewModel.state.value.canSend)
+        viewModel.setTopCountText("12a345")
+        assertEquals("1234", viewModel.state.value.topCountText)
+        assertEquals("Play Sift top 1234", viewModel.state.value.playlistName)
+    }
+
+    @Test
+    fun aZeroCountCannotBeSent() = runTest(dispatcher) {
+        val viewModel = viewModel()
+        advanceUntilIdle()
+        viewModel.setTopCountText("0")
+
+        viewModel.send()
+        advanceUntilIdle()
+
+        assertTrue(scheduler.startedRequests.isEmpty())
+    }
+
+    @Test
+    fun theAllChipUsesTheNumberOfPlayedSongs() = runTest(dispatcher) {
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.useAllPlayedCount()
+        advanceUntilIdle()
+
+        assertEquals("42", viewModel.state.value.topCountText)
     }
 }

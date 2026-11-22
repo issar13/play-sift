@@ -1,5 +1,16 @@
 package app.playsift.ui
 
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.material3.FilterChip
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -39,7 +50,8 @@ class SpotifyActions(
     val onSignOut: () -> Unit,
     val onClientIdChange: (String) -> Unit,
     val onChooseSource: (SourceChoice) -> Unit,
-    val onTopCountChange: (Int) -> Unit,
+    val onTopCountTextChange: (String) -> Unit,
+    val onUseAllPlayedCount: () -> Unit,
     val onPlaylistNameChange: (String) -> Unit,
     val onSend: () -> Unit,
     val onCancelSend: () -> Unit,
@@ -132,15 +144,7 @@ private fun StageSection(state: SpotifyUiState, isPreparingTrash: Boolean, actio
 private fun SetupSection(state: SpotifyUiState, actions: SpotifyActions) {
     Text("Songs to send", style = MaterialTheme.typography.titleMedium)
     SourceRadio("Top played", state.choice == SourceChoice.TopPlayed, true) { actions.onChooseSource(SourceChoice.TopPlayed) }
-    if (state.choice == SourceChoice.TopPlayed) {
-        OutlinedTextField(
-            value = state.topCount.toString(),
-            onValueChange = { text -> text.toIntOrNull()?.takeIf { it > 0 }?.let(actions.onTopCountChange) },
-            label = { Text("How many songs") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            singleLine = true,
-        )
-    }
+    if (state.choice == SourceChoice.TopPlayed) TopCountInput(state, actions)
     SourceRadio("Everything played", state.choice == SourceChoice.EverythingPlayed, true) { actions.onChooseSource(SourceChoice.EverythingPlayed) }
     SourceRadio(
         label = "Songs you ticked (${state.tickedTracks.size})",
@@ -158,7 +162,49 @@ private fun SetupSection(state: SpotifyUiState, actions: SpotifyActions) {
         "Playlists are private. Sending the same source again updates its playlist instead of making a new one.",
         style = MaterialTheme.typography.bodySmall,
     )
-    Button(onClick = actions.onSend) { Text("Create playlist") }
+    Button(onClick = actions.onSend, enabled = state.canSend) {
+        Text(state.topCount?.takeIf { state.choice == SourceChoice.TopPlayed }?.let { "Send $it songs to Spotify" } ?: "Create playlist")
+    }
+}
+
+private val TOP_COUNT_PRESETS = listOf(5, 25, 100, 250)
+
+@Composable
+private fun TopCountInput(state: SpotifyUiState, actions: SpotifyActions) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        TopCountField(state.topCountText, actions.onTopCountTextChange)
+        if (state.topCount == null) Text("Enter a number above 0 to send.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TOP_COUNT_PRESETS.forEach { preset ->
+                FilterChip(
+                    selected = state.topCount == preset,
+                    onClick = { actions.onTopCountTextChange(preset.toString()) },
+                    label = { Text(preset.toString()) },
+                )
+            }
+            FilterChip(selected = false, onClick = actions.onUseAllPlayedCount, label = { Text("All") })
+        }
+    }
+}
+
+/** Holds the typed text as it is, so it can be emptied and retyped; focusing selects it all so typing replaces it. */
+@Composable
+private fun TopCountField(text: String, onTextChange: (String) -> Unit) {
+    var fieldValue by remember { mutableStateOf(TextFieldValue(text)) }
+    if (fieldValue.text != text) fieldValue = TextFieldValue(text, TextRange(text.length))
+    OutlinedTextField(
+        value = fieldValue,
+        onValueChange = { changed ->
+            fieldValue = changed
+            onTextChange(changed.text)
+        },
+        label = { Text("How many songs") },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
+        singleLine = true,
+        modifier = Modifier.testTag("topCountField").onFocusChanged { focus ->
+            if (focus.isFocused) fieldValue = fieldValue.copy(selection = TextRange(0, fieldValue.text.length))
+        },
+    )
 }
 
 @Composable
