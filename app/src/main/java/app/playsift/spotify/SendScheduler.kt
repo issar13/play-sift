@@ -9,6 +9,8 @@ import androidx.work.await
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 sealed interface SendWorkState {
     data object Idle : SendWorkState
@@ -36,22 +38,26 @@ const val PROGRESS_TOTAL = "total"
 const val PROGRESS_PUBLISHING = "publishing"
 
 class WorkManagerSendScheduler(private val workManager: WorkManager, private val store: SendStore) : SendScheduler {
+    /** One start at a time, so a second tap cannot overwrite the saved request of a send that is about to be queued. */
+    private val admission = Mutex()
+
     override val state: Flow<SendWorkState> =
         workManager.getWorkInfosForUniqueWorkFlow(SEND_UNIQUE_WORK_NAME).map { infos ->
             infos.firstOrNull { !it.state.isFinished }?.let(::stateOf) ?: SendWorkState.Idle
         }
 
     /** Refuses while a send is queued or running; the request is saved first because ticked songs do not fit in work input data. */
-    override suspend fun start(request: SendRequest): StartOutcome {
-        if (state.first() != SendWorkState.Idle) return StartOutcome.AlreadyRunning
-        store.clearSaved()
-        store.saveRequest(request)
-        val work = OneTimeWorkRequestBuilder<SpotifySendWorker>()
-            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-            .build()
-        workManager.enqueueUniqueWork(SEND_UNIQUE_WORK_NAME, ExistingWorkPolicy.KEEP, work).await()
-        return StartOutcome.Started
-    }
+    override suspend fun start(request: SendRequest): StartOutcome =
+        admission.withLock {
+            if (state.first() != SendWorkState.Idle) return@withLock StartOutcome.AlreadyRunning
+            store.clearSaved()
+            store.saveRequest(request)
+            val work = OneTimeWorkRequestBuilder<SpotifySendWorker>()
+                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                .build()
+            workManager.enqueueUniqueWork(SEND_UNIQUE_WORK_NAME, ExistingWorkPolicy.KEEP, work).await()
+            StartOutcome.Started
+        }
 
     override fun cancel() {
         workManager.cancelUniqueWork(SEND_UNIQUE_WORK_NAME)

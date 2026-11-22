@@ -8,6 +8,7 @@ import androidx.work.WorkManager
 import app.playsift.BuildConfig
 import app.playsift.files.MediaStoreFileSizes
 import app.playsift.history.PlayHistoryDatabase
+import app.playsift.history.inObservationOrder
 import app.playsift.history.mergeHistory
 import app.playsift.history.roomPlayHistory
 import app.playsift.player.LibraryList
@@ -31,12 +32,18 @@ class SpotifyComponents private constructor(private val context: Context) {
     val publisher = PlaylistPublisher(api, dao)
     val sendStore: SendStore = DataStoreSendStore(context.settingsDataStore)
 
+    /** One scheduler for the whole app, so its admission lock covers every caller. */
+    val sendScheduler: SendScheduler by lazy { WorkManagerSendScheduler(WorkManager.getInstance(context), sendStore) }
+
     private val library by lazy { PlayerLibrary(context.contentResolver) }
     private val history by lazy { roomPlayHistory(context) }
 
     suspend fun loadMergedTracks(): List<PlayerTrack> {
-        val playerTracks = library.tracks(LibraryList.AllTracks, Period.ZERO, clock.instant())
-        return mergeHistory(playerTracks, history.record(playerTracks))
+        val (playerTracks, entries) = inObservationOrder {
+            val playerTracks = library.tracks(LibraryList.AllTracks, Period.ZERO, clock.instant())
+            playerTracks to history.record(playerTracks)
+        }
+        return mergeHistory(playerTracks, entries)
     }
 
     suspend fun playedSongCount(): Int = loadMergedTracks().count { it.playCount > 0 }
@@ -68,7 +75,7 @@ fun spotifyViewModelFactory(application: Application): ViewModelProvider.Factory
             publisher = components.publisher,
             fileSizes = MediaStoreFileSizes(application.contentResolver),
             store = components.sendStore,
-            scheduler = WorkManagerSendScheduler(WorkManager.getInstance(application), components.sendStore),
+            scheduler = components.sendScheduler,
             playedSongCount = components::playedSongCount,
             builtInClientId = BuildConfig.SPOTIFY_CLIENT_ID,
         ) as T

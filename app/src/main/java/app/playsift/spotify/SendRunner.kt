@@ -32,7 +32,7 @@ class SendRunner(
         val source = sourceFor(request.choice, request.topCount)
         val mergedTracks = if (source == SendSource.TickedSongs) emptyList() else loadMergedTracks()
         val report = matcher.match(tracksFor(source, mergedTracks, request.tickedTracks), onProgress)
-        if (report.matched.isEmpty() && report.unsure.isEmpty()) return failedSend(request, NONE_MATCHED_MESSAGE)
+        if (report.matched.isEmpty() && report.unsure.isEmpty() && report.notFound.isEmpty()) return failedSend(request, NONE_MATCHED_MESSAGE)
         val name = source.nameFor(request.playlistName)
         val playlist = report.matched.takeIf { it.isNotEmpty() }?.let { matched ->
             onPublishing()

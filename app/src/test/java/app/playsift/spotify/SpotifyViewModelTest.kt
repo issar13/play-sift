@@ -9,6 +9,7 @@ import java.io.File
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -52,7 +53,7 @@ class SpotifyViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun viewModel(builtInClientId: String = "built-in", spotifyApi: SpotifyApi = api): SpotifyViewModel {
+    private fun viewModel(builtInClientId: String = "built-in", spotifyApi: SpotifyApi = api, playedSongCount: suspend () -> Int = { 42 }): SpotifyViewModel {
         val dataStore = PreferenceDataStoreFactory.create(scope = dataStoreScope) { File(folder.root, "settings.preferences_pb") }
         val clientId = SpotifyClientId(dataStore, builtInClientId)
         val fileSizes = object : FileSizes {
@@ -68,7 +69,7 @@ class SpotifyViewModelTest {
             fileSizes = fileSizes,
             store = store,
             scheduler = scheduler,
-            playedSongCount = { 42 },
+            playedSongCount = playedSongCount,
             builtInClientId = builtInClientId,
         )
     }
@@ -90,7 +91,7 @@ class SpotifyViewModelTest {
         advanceUntilIdle()
         assertEquals(false, viewModel.state.value.willUpdatePlaylist)
 
-        dao.playlists["top:play sift top 100"] = SpotifyPlaylistEntry("top:play sift top 100", "p1", "url")
+        dao.playlists["test-user" to "top:play sift top 100"] = SpotifyPlaylistEntry("test-user", "top:play sift top 100", "p1", "url")
         viewModel.setPlaylistName("Play Sift top 100 ")
         advanceUntilIdle()
         assertEquals(true, viewModel.state.value.willUpdatePlaylist)
@@ -315,18 +316,19 @@ class SpotifyViewModelTest {
     }
 
     @Test
-    fun confirmingTheLastUnsureSongUpdatesTheSamePlaylistButIsNotOfferedForTheTrash() = runTest(dispatcher) {
+    fun confirmingTheLastUnsureSongAddsItToTheSamePlaylistButIsNotOfferedForTheTrash() = runTest(dispatcher) {
         store.save(savedSend(added = listOf(matchedSong(1, "Sure")), unsure = listOf(unsureSong(2, "Maybe"))))
         val viewModel = viewModel()
         advanceUntilIdle()
 
-        viewModel.confirmUnsure()
+        viewModel.confirmUnsure(2)
         advanceUntilIdle()
 
         assertEquals(listOf(1L, 2L), done(viewModel).result.added.map { it.track.id })
         assertEquals(listOf(1L), done(viewModel).offer.map { it.track.id })
         assertTrue(done(viewModel).unsure.isEmpty())
-        assertEquals(listOf("spotify:track:Sure", "spotify:track:Maybe"), api.replaceCalls.single().second)
+        assertEquals(listOf("playlist-1" to listOf("spotify:track:Maybe")), api.addCalls)
+        assertTrue(api.replaceCalls.isEmpty())
     }
 
     @Test
@@ -335,7 +337,7 @@ class SpotifyViewModelTest {
         val viewModel = viewModel()
         advanceUntilIdle()
 
-        viewModel.skipUnsure()
+        viewModel.skipUnsure(2)
         advanceUntilIdle()
 
         assertEquals(listOf(2L), done(viewModel).result.skippedUnsure.map { it.track.id })
@@ -349,7 +351,7 @@ class SpotifyViewModelTest {
         val viewModel = viewModel()
         advanceUntilIdle()
 
-        viewModel.confirmUnsure()
+        viewModel.confirmUnsure(2)
         advanceUntilIdle()
 
         assertEquals(listOf("Play Sift picks"), api.createdNames)
@@ -362,7 +364,7 @@ class SpotifyViewModelTest {
         val viewModel = viewModel()
         advanceUntilIdle()
 
-        viewModel.skipUnsure()
+        viewModel.skipUnsure(2)
         advanceUntilIdle()
 
         assertTrue(viewModel.state.value.stage is SpotifyStage.Failed)
@@ -574,5 +576,99 @@ class SpotifyViewModelTest {
         assertEquals(listOf(3L), done(viewModel).result.notFound.map { it.id })
         assertTrue(viewModel.state.value.picker!!.errorMessage!!.startsWith("Spotify no longer accepts"))
         assertTrue(dao.allMatches().isEmpty())
+    }
+
+    @Test
+    fun confirmingOneOfSeveralUnsureSongsAddsItToThePlaylistAtOnce() = runTest(dispatcher) {
+        store.save(savedSend(added = listOf(matchedSong(1, "Sure")), unsure = listOf(unsureSong(2, "Maybe"), unsureSong(3, "Perhaps"))))
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.confirmUnsure(2)
+        advanceUntilIdle()
+
+        assertEquals(listOf("playlist-1" to listOf("spotify:track:Maybe")), api.addCalls)
+        assertEquals(listOf(3L), done(viewModel).unsure.map { it.track.id })
+        viewModel.backToSetup()
+        advanceUntilIdle()
+        assertEquals(SpotifyStage.Setup, viewModel.state.value.stage)
+    }
+
+    @Test
+    fun aDecisionForASongThatIsNotOnScreenChangesNothing() = runTest(dispatcher) {
+        store.save(savedSend(unsure = listOf(unsureSong(2, "Maybe"), unsureSong(3, "Perhaps"))))
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.confirmUnsure(3)
+        viewModel.skipUnsure(3)
+        advanceUntilIdle()
+
+        assertEquals(listOf(2L, 3L), done(viewModel).unsure.map { it.track.id })
+        assertTrue(api.addCalls.isEmpty())
+        assertTrue(done(viewModel).result.added.isEmpty())
+    }
+
+    @Test
+    fun aSecondTapOnAddItNeverConfirmsTheNextSong() = runTest(dispatcher) {
+        store.save(savedSend(unsure = listOf(unsureSong(2, "Maybe"), unsureSong(3, "Perhaps"))))
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.confirmUnsure(2)
+        viewModel.confirmUnsure(2)
+        advanceUntilIdle()
+
+        assertEquals(listOf(2L), done(viewModel).result.added.map { it.track.id })
+        assertEquals(listOf(3L), done(viewModel).unsure.map { it.track.id })
+    }
+
+    @Test
+    fun theDecisionButtonsAreLockedWhileADecisionIsSaved() = runTest(dispatcher) {
+        store.save(savedSend(unsure = listOf(unsureSong(2, "Maybe"))))
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.skipUnsure(2)
+        assertTrue(viewModel.state.value.isDeciding)
+        advanceUntilIdle()
+
+        assertEquals(false, viewModel.state.value.isDeciding)
+    }
+
+    @Test
+    fun backToSetupWaitsForADecisionThatIsBeingPublished() = runTest(dispatcher) {
+        val gate = CompletableDeferred<Unit>()
+        val slowApi = object : FakeSpotifyApi() {
+            override suspend fun addItems(playlistId: String, uris: List<String>) {
+                gate.await()
+                super.addItems(playlistId, uris)
+            }
+        }
+        store.save(savedSend(unsure = listOf(unsureSong(2, "Maybe"), unsureSong(3, "Perhaps"))))
+        val viewModel = viewModel(spotifyApi = slowApi)
+        advanceUntilIdle()
+
+        viewModel.confirmUnsure(2)
+        advanceUntilIdle()
+        viewModel.backToSetup()
+        advanceUntilIdle()
+        gate.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(SpotifyStage.Setup, viewModel.state.value.stage)
+    }
+
+    @Test
+    fun aFailedPlayedCountLookupShowsAMessageAndKeepsTheCount() = runTest(dispatcher) {
+        val viewModel = viewModel(playedSongCount = { throw SecurityException("no access") })
+        advanceUntilIdle()
+        val before = viewModel.state.value.topCountText
+
+        viewModel.useAllPlayedCount()
+        advanceUntilIdle()
+
+        assertEquals(before, viewModel.state.value.topCountText)
+        assertNotNull(viewModel.state.value.message)
     }
 }

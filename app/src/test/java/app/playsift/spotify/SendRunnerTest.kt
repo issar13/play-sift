@@ -80,8 +80,20 @@ class SendRunnerTest {
     }
 
     @Test
-    fun whenNothingMatchesTheSendFailsWithoutAPlaylist() = runTest {
-        val saved = run(sendRequest(tickedTracks = listOf(songTrack(9, title = "Nowhere"))))
+    fun whenNothingMatchesNoPlaylistIsMadeAndTheNotFoundSongsAreKept() = runTest {
+        val nowhere = songTrack(9, title = "Nowhere")
+
+        val saved = run(sendRequest(tickedTracks = listOf(nowhere)))
+
+        assertEquals(null, saved.failureMessage)
+        assertEquals(null, saved.result.playlist)
+        assertEquals(listOf(nowhere), saved.result.notFound)
+        assertTrue(api.createdNames.isEmpty())
+    }
+
+    @Test
+    fun aSendWithNoSongsAtAllFailsWithTheNoneMatchedMessage() = runTest {
+        val saved = run(sendRequest(tickedTracks = emptyList()))
 
         assertEquals(NONE_MATCHED_MESSAGE, saved.failureMessage)
         assertTrue(api.createdNames.isEmpty())

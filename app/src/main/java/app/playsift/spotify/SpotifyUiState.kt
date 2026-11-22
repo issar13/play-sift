@@ -50,6 +50,8 @@ data class SpotifyUiState(
     val picker: PickerState? = null,
     /** True when sending now would update an existing playlist, false when it would create a new one. */
     val willUpdatePlaylist: Boolean = false,
+    /** True while an unsure song's yes or skip is being saved, so the buttons cannot act on a second song. */
+    val isDeciding: Boolean = false,
 ) {
     val hasClientId: Boolean get() = !builtInClientIdMissing || clientIdOverride.isNotBlank()
 

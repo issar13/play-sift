@@ -5,9 +5,13 @@ import java.io.File
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -38,6 +42,8 @@ class InMemoryTokenStore(var stored: SpotifyTokens? = null, var pending: Pending
 
 class FakeAccounts : SpotifyAccounts {
     var refreshCount = 0
+    /** When set, a refresh waits here after it started, like a slow network call. */
+    var refreshGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
     var exchangedWith: Triple<String, String, String>? = null
 
     override suspend fun exchangeCode(clientId: String, code: String, verifier: String): SpotifyTokens {
@@ -47,6 +53,7 @@ class FakeAccounts : SpotifyAccounts {
 
     override suspend fun refresh(clientId: String, refreshToken: String): SpotifyTokens {
         refreshCount += 1
+        refreshGate?.await()
         return SpotifyTokens("access-refreshed-$refreshCount", refreshToken, Instant.parse("2026-11-22T02:00:00Z"))
     }
 }
@@ -95,8 +102,39 @@ class SpotifySessionTest {
         assertEquals(Triple("client-1", "the-code", "the-verifier"), accounts.exchangedWith)
         assertEquals(true, session.isSignedIn())
     }
-}
 
+    @Test
+    fun signingOutWaitsForARefreshThatIsAlreadyRunning() = runTest {
+        val store = InMemoryTokenStore(SpotifyTokens("rejected", "refresh", Instant.parse("2026-11-22T01:00:00Z")))
+        val session = session(store)
+        accounts.refreshGate = CompletableDeferred()
+
+        val refresh = async { session.refreshedAfterRejecting("rejected") }
+        runCurrent()
+        val signOut = async { session.signOut() }
+        runCurrent()
+        accounts.refreshGate!!.complete(Unit)
+        listOf(refresh, signOut).awaitAll()
+
+        assertNull(store.stored)
+    }
+
+    @Test
+    fun aRefreshThatStartedBeforeSignInCannotOverwriteTheNewTokens() = runTest {
+        val store = InMemoryTokenStore(SpotifyTokens("rejected", "refresh", Instant.parse("2026-11-22T01:00:00Z")))
+        val session = session(store)
+        accounts.refreshGate = CompletableDeferred()
+
+        val refresh = async { session.refreshedAfterRejecting("rejected") }
+        runCurrent()
+        val signIn = async { session.completeSignIn("the-code", "the-verifier") }
+        runCurrent()
+        accounts.refreshGate!!.complete(Unit)
+        listOf(refresh, signIn).awaitAll()
+
+        assertEquals("access-from-code", store.stored!!.accessToken)
+    }
+}
 /** Reversible stand-in for the Keystore cipher, which needs a device. */
 private class ReverseCipher : SecretCipher {
     var corrupted = false

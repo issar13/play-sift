@@ -130,9 +130,14 @@ class SpotifySession(
 
     suspend fun isSignedIn(): Boolean = store.tokens() != null
 
+    /** Saves under [refreshLock], so a refresh that started earlier cannot overwrite the new sign-in afterwards. */
     suspend fun completeSignIn(code: String, verifier: String) {
-        store.saveTokens(accounts.exchangeCode(clientId(), code, verifier))
+        val tokens = accounts.exchangeCode(clientId(), code, verifier)
+        refreshLock.withLock { store.saveTokens(tokens) }
     }
+
+    /** Waits for an in-flight refresh, so the refresh cannot store credentials after the sign-out. */
+    suspend fun signOut() = refreshLock.withLock { store.clear() }
 
     override suspend fun current(): String {
         val stored = checkNotNull(store.tokens()) { "Not signed in to Spotify" }

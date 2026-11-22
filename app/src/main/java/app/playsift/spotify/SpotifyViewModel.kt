@@ -93,7 +93,7 @@ class SpotifyViewModel(
 
     fun signOut() {
         viewModelScope.launch {
-            tokenStore.clear()
+            session.signOut()
             mutableState.update { it.copy(isSignedIn = false, userName = null, stage = SpotifyStage.Setup) }
         }
     }
@@ -125,7 +125,14 @@ class SpotifyViewModel(
     /** The "All" chip: the number of songs that have been played, at most [MAX_TOP_COUNT]. */
     fun useAllPlayedCount() {
         viewModelScope.launch {
-            val count = playedSongCount().coerceAtMost(MAX_TOP_COUNT)
+            val count = try {
+                playedSongCount().coerceAtMost(MAX_TOP_COUNT)
+            } catch (exception: CancellationException) {
+                throw exception
+            } catch (_: Exception) {
+                showMessage(PLAYED_COUNT_FAILED_MESSAGE)
+                return@launch
+            }
             mutableState.update { withTopCountText(it, count.toString()) }
             refreshPlaylistHint()
         }
@@ -147,17 +154,27 @@ class SpotifyViewModel(
         viewModelScope.launch {
             val current = mutableState.value
             val source = sourceFor(current.choice, current.topCount ?: DEFAULT_TOP_COUNT)
-            val willUpdate = publisher.hasPlaylistFor(source, source.nameFor(current.playlistName))
+            val willUpdate = hasPlaylistOrFalse(source, source.nameFor(current.playlistName))
             mutableState.update { it.copy(willUpdatePlaylist = willUpdate) }
         }
     }
 
+    /** The hint is a nicety: while signed out or offline the account is unknown, so it says a new playlist will be made. */
+    private suspend fun hasPlaylistOrFalse(source: SendSource, name: String): Boolean =
+        try {
+            publisher.hasPlaylistFor(source, name)
+        } catch (exception: CancellationException) {
+            throw exception
+        } catch (_: Exception) {
+            false
+        }
+
     fun messageShown() = mutableState.update { it.copy(message = null) }
 
-    /** Forgets the last result (and any unsure songs still waiting) so the setup form shows again. */
+    /** Forgets the last result (and any unsure songs still waiting) so the setup form shows again, after a decision that is being saved. */
     fun backToSetup() {
         mutableState.update { it.copy(picker = null, confirmation = null) }
-        viewModelScope.launch { store.clearSaved() }
+        viewModelScope.launch { decisionLock.withLock { store.clearSaved() } }
         refreshPlaylistHint()
     }
 
@@ -179,15 +196,22 @@ class SpotifyViewModel(
         }
     }
 
-    fun confirmUnsure() =
-        resolveFirstUnsure { saved, unsure ->
+    /** Adds the song with [trackId] to the playlist now, so a confirmed song is never left behind when the user leaves the result. Does nothing when that song is not the one waiting on screen. */
+    fun confirmUnsure(trackId: Long) =
+        resolveFirstUnsure(trackId) { saved, unsure ->
             val confirmed = matcher.confirm(unsure)
-            saved.copy(result = saved.result.copy(added = saved.result.added + confirmed), unsure = saved.unsure.drop(1))
+            val playlist = appendedPlaylist(saved, unsure.candidate.uri)
+            saved.copy(
+                result = saved.result.copy(added = saved.result.added + confirmed, playlist = playlist),
+                unsure = saved.unsure.drop(1),
+            )
         }
 
-    fun skipUnsure() =
-        resolveFirstUnsure { saved, unsure ->
-            saved.copy(result = saved.result.copy(skippedUnsure = saved.result.skippedUnsure + unsure), unsure = saved.unsure.drop(1))
+    fun skipUnsure(trackId: Long) =
+        resolveFirstUnsure(trackId) { saved, unsure ->
+            updatePlaylistWhenSettled(
+                saved.copy(result = saved.result.copy(skippedUnsure = saved.result.skippedUnsure + unsure), unsure = saved.unsure.drop(1)),
+            )
         }
 
     /** Opens the picker for a not-found or unsure song and looks up its Spotify options. */
@@ -283,19 +307,24 @@ class SpotifyViewModel(
         return SpotifyStage.Done(saved.result, saved.unsure, offer, selectedIds = keptSelection.intersect(offer.map { it.track.id }.toSet()))
     }
 
-    /** Decides the unsure song on screen. The playlist is updated once the last one is decided, if any was added. */
-    private fun resolveFirstUnsure(decide: suspend (SavedSend, UnsureSong) -> SavedSend) {
+    /** Decides the unsure song on screen, which must be the one with [trackId]: a tap that arrives after that song was decided changes nothing. */
+    private fun resolveFirstUnsure(trackId: Long, decide: suspend (SavedSend, UnsureSong) -> SavedSend) {
+        mutableState.update { it.copy(isDeciding = true) }
         viewModelScope.launch {
-            decisionLock.withLock {
-                val saved = store.saved.first() ?: return@launch
-                val unsure = saved.unsure.firstOrNull() ?: return@launch
-                try {
-                    store.save(updatePlaylistWhenSettled(decide(saved, unsure)))
-                } catch (exception: CancellationException) {
-                    throw exception
-                } catch (exception: Exception) {
-                    showMessage(failureText(exception))
+            try {
+                decisionLock.withLock {
+                    val saved = store.saved.first() ?: return@launch
+                    val unsure = saved.unsure.firstOrNull()?.takeIf { it.track.id == trackId } ?: return@launch
+                    try {
+                        store.save(decide(saved, unsure))
+                    } catch (exception: CancellationException) {
+                        throw exception
+                    } catch (exception: Exception) {
+                        showMessage(failureText(exception))
+                    }
                 }
+            } finally {
+                mutableState.update { it.copy(isDeciding = false) }
             }
         }
     }
@@ -344,5 +373,7 @@ class SpotifyViewModel(
 
     private fun showMessage(text: String) = mutableState.update { it.copy(message = text) }
 }
+
+private const val PLAYED_COUNT_FAILED_MESSAGE = "Couldn't read your play counts. Check that Play Sift can read your music player's library."
 
 private const val ALREADY_RUNNING_MESSAGE = "A send to Spotify is already running. Wait for it to finish or cancel it first."

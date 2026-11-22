@@ -12,10 +12,13 @@ import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -113,6 +116,35 @@ class SendWorkTest {
 
         assertEquals(1, api.createdNames.size)
         assertEquals(StartOutcome.Started, scheduler.start(request))
+    }
+
+    @Test
+    fun twoStartsAtTheSameTimeAdmitOneRequestAndKeepItsSavedRequest() = waiting {
+        val gate = CompletableDeferred<Unit>()
+        val slowStore = object : SendStore by store {
+            override suspend fun clearSaved() {
+                gate.await()
+                store.clearSaved()
+            }
+        }
+        scheduler = WorkManagerSendScheduler(WorkManager.getInstance(context), slowStore)
+        val release = CompletableDeferred<Unit>()
+        api.beforeSearch = { release.await() }
+        val firstRequest = sendRequest(playlistName = "First", tickedTracks = tickedSongs)
+        val secondRequest = sendRequest(playlistName = "Second", tickedTracks = tickedSongs)
+
+        val outcomes = coroutineScope {
+            val first = async { scheduler.start(firstRequest) }
+            val second = async { scheduler.start(secondRequest) }
+            yield()
+            gate.complete(Unit)
+            listOf(first.await(), second.await())
+        }
+        release.complete(Unit)
+        waitForState(SendWorkState.Idle)
+
+        assertEquals(listOf(StartOutcome.Started, StartOutcome.AlreadyRunning), outcomes)
+        assertEquals(firstRequest, store.storedRequest)
     }
 
     @Test
