@@ -187,14 +187,54 @@ class SpotifyTransferTest {
     }
 
     @Test
-    fun topPlayedKeepsOnePlaylistWhateverTheName() = runTest {
+    fun topTwoHundredThenTopOneHundredMakeTwoPlaylists() = runTest {
         val publisher = PlaylistPublisher(api, dao)
 
-        val first = publisher.publish(SendSource.TopPlayed(100), "Top 100", listOf("spotify:track:a"))
-        val second = publisher.publish(SendSource.TopPlayed(100), "Something else", listOf("spotify:track:b"))
+        val two = publisher.publish(SendSource.TopPlayed(200), SendSource.TopPlayed(200).defaultName, listOf("spotify:track:a"))
+        val one = publisher.publish(SendSource.TopPlayed(100), SendSource.TopPlayed(100).defaultName, listOf("spotify:track:b"))
+
+        assertEquals(listOf("Play Sift top 200", "Play Sift top 100"), api.createdNames)
+        assertNotEquals(two.id, one.id)
+    }
+
+    @Test
+    fun topOneHundredAgainUpdatesTheSamePlaylist() = runTest {
+        val publisher = PlaylistPublisher(api, dao)
+        val name = SendSource.TopPlayed(100).defaultName
+
+        val first = publisher.publish(SendSource.TopPlayed(100), name, listOf("spotify:track:a"))
+        val second = publisher.publish(SendSource.TopPlayed(100), name, listOf("spotify:track:b"))
 
         assertEquals(1, api.createdNames.size)
         assertEquals(first.id, second.id)
+    }
+
+    @Test
+    fun aTypedNameForTopPlayedMakesItsOwnPlaylist() = runTest {
+        val publisher = PlaylistPublisher(api, dao)
+
+        val byDefault = publisher.publish(SendSource.TopPlayed(100), "Play Sift top 100", listOf("spotify:track:a"))
+        val typed = publisher.publish(SendSource.TopPlayed(100), "Summer", listOf("spotify:track:b"))
+
+        assertEquals(2, api.createdNames.size)
+        assertNotEquals(byDefault.id, typed.id)
+    }
+
+    @Test
+    fun everythingPlayedRemembersPlaylistsPerNameToo() = runTest {
+        val publisher = PlaylistPublisher(api, dao)
+
+        publisher.publish(SendSource.EverythingPlayed, "One", listOf("spotify:track:a"))
+        publisher.publish(SendSource.EverythingPlayed, "Two", listOf("spotify:track:a"))
+
+        assertEquals(listOf("One", "Two"), api.createdNames)
+    }
+
+    @Test
+    fun defaultNamesCarryTheCount() {
+        assertEquals("Play Sift top 200", SendSource.TopPlayed(200).defaultName)
+        assertEquals("Play Sift played", SendSource.EverythingPlayed.defaultName)
+        assertEquals("Play Sift picks", SendSource.TickedSongs.defaultName)
     }
 
     @Test

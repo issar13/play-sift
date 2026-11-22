@@ -52,6 +52,7 @@ class SpotifyViewModel(
             mutableState.update { it.copy(clientIdOverride = clientId.override()) }
             refreshSignInState()
         }
+        refreshPlaylistHint()
         viewModelScope.launch {
             combine(store.saved, scheduler.state) { saved, work -> saved to work }.collect { (saved, work) ->
                 val stage = stageFor(saved, work)
@@ -108,18 +109,25 @@ class SpotifyViewModel(
             it.copy(choice = SourceChoice.TickedSongs, tickedTracks = tracks, playlistName = SendSource.TickedSongs.defaultName)
         }
         viewModelScope.launch { store.clearSaved() }
+        refreshPlaylistHint()
     }
 
-    fun chooseSource(choice: SourceChoice) =
+    fun chooseSource(choice: SourceChoice) {
         mutableState.update { it.copy(choice = choice, playlistName = sourceFor(choice, it.topCount ?: DEFAULT_TOP_COUNT).defaultName) }
+        refreshPlaylistHint()
+    }
 
-    fun setTopCountText(input: String) = mutableState.update { withTopCountText(it, topCountTextFrom(input)) }
+    fun setTopCountText(input: String) {
+        mutableState.update { withTopCountText(it, topCountTextFrom(input)) }
+        refreshPlaylistHint()
+    }
 
     /** The "All" chip: the number of songs that have been played, at most [MAX_TOP_COUNT]. */
     fun useAllPlayedCount() {
         viewModelScope.launch {
             val count = playedSongCount().coerceAtMost(MAX_TOP_COUNT)
             mutableState.update { withTopCountText(it, count.toString()) }
+            refreshPlaylistHint()
         }
     }
 
@@ -129,7 +137,20 @@ class SpotifyViewModel(
         return if (current.choice == SourceChoice.TopPlayed && count != null) typed.copy(playlistName = SendSource.TopPlayed(count).defaultName) else typed
     }
 
-    fun setPlaylistName(name: String) = mutableState.update { it.copy(playlistName = name) }
+    fun setPlaylistName(name: String) {
+        mutableState.update { it.copy(playlistName = name) }
+        refreshPlaylistHint()
+    }
+
+    /** Works out whether the current source and name would update a remembered playlist, for the hint under the name field. */
+    private fun refreshPlaylistHint() {
+        viewModelScope.launch {
+            val current = mutableState.value
+            val source = sourceFor(current.choice, current.topCount ?: DEFAULT_TOP_COUNT)
+            val willUpdate = publisher.hasPlaylistFor(source, source.nameFor(current.playlistName))
+            mutableState.update { it.copy(willUpdatePlaylist = willUpdate) }
+        }
+    }
 
     fun messageShown() = mutableState.update { it.copy(message = null) }
 
@@ -137,6 +158,7 @@ class SpotifyViewModel(
     fun backToSetup() {
         mutableState.update { it.copy(picker = null, confirmation = null) }
         viewModelScope.launch { store.clearSaved() }
+        refreshPlaylistHint()
     }
 
     /** Stops the background send; songs matched so far stay cached for the next run. */

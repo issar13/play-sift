@@ -16,7 +16,7 @@ data class SpotifyMatchEntry(
     val matchedAt: Instant,
 )
 
-/** The playlist made for one source, so running the same source again replaces its items instead of making a second playlist. */
+/** The playlist made for one source and name, so sending the same name again replaces its items instead of making a second playlist. */
 @Entity(tableName = "spotify_playlist", primaryKeys = ["sourceKey"])
 data class SpotifyPlaylistEntry(
     val sourceKey: String,

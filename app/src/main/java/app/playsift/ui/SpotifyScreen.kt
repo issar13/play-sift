@@ -178,7 +178,11 @@ private fun SetupSection(state: SpotifyUiState, actions: SpotifyActions) {
         modifier = Modifier.fillMaxWidth(),
     )
     Text(
-        "Playlists are private. Sending the same source again updates its playlist instead of making a new one.",
+        if (state.willUpdatePlaylist) "Updates your existing playlist" else "Creates a new playlist",
+        style = MaterialTheme.typography.bodySmall,
+    )
+    Text(
+        "Playlists are private. Use a different name to make another playlist.",
         style = MaterialTheme.typography.bodySmall,
     )
     Button(onClick = actions.onSend, enabled = state.canSend) {

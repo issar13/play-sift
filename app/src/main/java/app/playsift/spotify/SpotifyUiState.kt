@@ -48,6 +48,8 @@ data class SpotifyUiState(
     /** A short good-news line, such as "Added to Play Sift top 200". */
     val confirmation: String? = null,
     val picker: PickerState? = null,
+    /** True when sending now would update an existing playlist, false when it would create a new one. */
+    val willUpdatePlaylist: Boolean = false,
 ) {
     val hasClientId: Boolean get() = !builtInClientIdMissing || clientIdOverride.isNotBlank()
 

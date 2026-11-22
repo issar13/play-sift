@@ -85,6 +85,26 @@ class SpotifyViewModelTest {
     }
 
     @Test
+    fun theHintSaysCreateUntilThatNameHasAPlaylist() = runTest(dispatcher) {
+        val viewModel = viewModel()
+        advanceUntilIdle()
+        assertEquals(false, viewModel.state.value.willUpdatePlaylist)
+
+        dao.playlists["top:play sift top 100"] = SpotifyPlaylistEntry("top:play sift top 100", "p1", "url")
+        viewModel.setPlaylistName("Play Sift top 100 ")
+        advanceUntilIdle()
+        assertEquals(true, viewModel.state.value.willUpdatePlaylist)
+
+        viewModel.setTopCountText("200")
+        advanceUntilIdle()
+        assertEquals(false, viewModel.state.value.willUpdatePlaylist)
+
+        viewModel.setPlaylistName("Play Sift top 100")
+        advanceUntilIdle()
+        assertEquals(true, viewModel.state.value.willUpdatePlaylist)
+    }
+
+    @Test
     fun missingClientIdBlocksSignIn() = runTest(dispatcher) {
         tokenStore.stored = null
         val viewModel = viewModel(builtInClientId = "")

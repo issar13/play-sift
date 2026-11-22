@@ -7,19 +7,20 @@ import java.time.Clock
 import kotlinx.serialization.Serializable
 
 /**
- * Where a playlist's songs come from. [key] names the playlist Play Sift remembers, so a re-run replaces it.
- * [playlistKey] is the remembered playlist for a typed name: most sources keep one, ticked songs keep one per name.
+ * Where a playlist's songs come from. [playlistKey] is the remembered playlist for a typed name, so every source keeps one
+ * playlist per name: a new name makes a new playlist and the same name replaces that playlist's songs.
  */
 sealed class SendSource(val key: String, val defaultName: String) {
-    open fun playlistKey(name: String): String = key
+    fun playlistKey(name: String): String = "$key:${name.trim().lowercase()}"
+
+    /** The name to use for what the user typed: blank means the source's default name. */
+    fun nameFor(typedName: String): String = typedName.trim().ifBlank { defaultName }
 
     data class TopPlayed(val count: Int) : SendSource("top", "Play Sift top $count")
 
     data object EverythingPlayed : SendSource("played", "Play Sift played")
 
-    data object TickedSongs : SendSource("ticked", "Play Sift picks") {
-        override fun playlistKey(name: String): String = "$key:${name.trim().lowercase()}"
-    }
+    data object TickedSongs : SendSource("ticked", "Play Sift picks")
 }
 
 fun sourceFor(choice: SourceChoice, topCount: Int): SendSource =
@@ -125,6 +126,9 @@ class PlaylistPublisher(private val api: SpotifyApi, private val dao: SpotifyDao
         fill(created, uris)
         return created
     }
+
+    /** True when sending [source] under [name] would update a playlist Play Sift already made. */
+    suspend fun hasPlaylistFor(source: SendSource, name: String): Boolean = dao.playlistFor(source.playlistKey(name)) != null
 
     private suspend fun tryFill(playlist: SpotifyPlaylist, uris: List<String>): SpotifyPlaylist? =
         try {

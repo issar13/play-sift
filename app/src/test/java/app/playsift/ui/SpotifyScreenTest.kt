@@ -90,6 +90,20 @@ class SpotifyScreenTest {
     }
 
     @Test
+    fun theHintUnderTheNameFieldSaysWhetherAPlaylistIsCreatedOrUpdated() {
+        showSetup(setupState.copy(willUpdatePlaylist = false))
+        composeRule.onNodeWithText("Creates a new playlist").assertExists()
+        composeRule.onNodeWithText("Updates your existing playlist").assertDoesNotExist()
+    }
+
+    @Test
+    fun theHintSaysUpdateWhenTheNameIsRemembered() {
+        showSetup(setupState.copy(willUpdatePlaylist = true))
+        composeRule.onNodeWithText("Updates your existing playlist").assertExists()
+        composeRule.onNodeWithText("Creates a new playlist").assertDoesNotExist()
+    }
+
+    @Test
     fun tappingAPresetChipSetsTheCount() {
         showSetup()
 
