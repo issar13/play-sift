@@ -57,6 +57,7 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import app.playsift.R
 import app.playsift.history.readBackupText
 import app.playsift.player.PlayerTrack
+import app.playsift.spotify.SourceChoice
 import app.playsift.spotify.SpotifyViewModel
 import app.playsift.spotify.notFoundShareText
 import app.playsift.spotify.spotifySearchLinks
@@ -220,9 +221,15 @@ fun PlaySiftApp(viewModel: LibraryViewModel, spotifyViewModel: SpotifyViewModel)
         spotifyViewModel.send()
     }
     val startSend: () -> Unit = {
+        val needsPlayerLibrary = spotifyState.choice != SourceChoice.TickedSongs
         val needsNotificationPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        if (needsNotificationPermission) notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) else spotifyViewModel.send()
+        when {
+            needsPlayerLibrary && state.access != AccessState.Ready ->
+                scope.launch { snackbarHostState.showSnackbar("${accessMessage(state.access)} Open Home to fix it, then send again.") }
+            needsNotificationPermission -> notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            else -> spotifyViewModel.send()
+        }
     }
     val spotifyActions = SpotifyActions(
         onSignIn = { spotifyViewModel.signIn(openSignInPage) },
@@ -279,7 +286,7 @@ fun PlaySiftApp(viewModel: LibraryViewModel, spotifyViewModel: SpotifyViewModel)
             movedCount = done.movedCount,
             attemptedCount = done.attemptedCount,
             onOpenPlayer = viewModel::openPlayer,
-            onFinished = viewModel::finishTrash,
+            onFinished = { spotifyViewModel.songsMovedToTrash(viewModel.finishTrash()) },
         )
         return
     }

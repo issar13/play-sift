@@ -86,13 +86,20 @@ fun TrackListScreen(
                         if (isPreparingTrash) {
                             CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                         } else {
-                            Text("Move ${state.selectedIds.size} to trash")
+                            Text(moveToTrashText(state))
                         }
                     }
                 }
             }
         }
     }
+}
+
+/** Shows the size like the Large chip does, once the size of every ticked song is known. */
+private fun moveToTrashText(state: LibraryUiState): String {
+    val hasEverySize = state.selectedIds.isNotEmpty() && state.selectedIds.all { it in state.sizesById }
+    val countText = "Move ${state.selectedIds.size} to trash"
+    return if (hasEverySize) "$countText (${storageText(state.selectedIds.sumOf { state.sizesById.getValue(it) })})" else countText
 }
 
 /** The one action on Most played and Never played, so it is the filled violet button there; beside the red trash button it is outlined. */
