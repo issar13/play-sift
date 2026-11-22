@@ -13,7 +13,7 @@ fun encodeHistory(entries: List<PlayHistoryEntry>, exportedAt: Instant): String 
         .put("entries", JSONArray(entries.map(::entryToJson)))
         .toString()
 
-/** Throws [IllegalArgumentException] for a file written by a newer version and a JSON exception for a damaged file. */
+/** Throws [IllegalArgumentException] for a file written by a newer version or with a negative or overflowing play count, and a JSON exception for a damaged file. */
 fun decodeHistory(json: String): List<PlayHistoryEntry> {
     val backup = JSONObject(json)
     require(backup.getInt("version") == BACKUP_VERSION) { "Unsupported history file version ${backup.getInt("version")}" }
@@ -63,15 +63,23 @@ private fun entryToJson(entry: PlayHistoryEntry): JSONObject =
         .put("lastPlayedAt", entry.lastPlayedAt?.toString() ?: JSONObject.NULL)
         .put("updatedAt", entry.updatedAt.toString())
 
-private fun entryFromJson(json: JSONObject) = PlayHistoryEntry(
+private fun entryFromJson(json: JSONObject): PlayHistoryEntry {
+    val lastSeenPlayerCount = json.getInt("lastSeenPlayerCount")
+    val carriedPlays = json.getInt("carriedPlays")
+    require(lastSeenPlayerCount >= 0 && carriedPlays >= 0) { "A play count in the history file is negative" }
+    require(lastSeenPlayerCount.toLong() + carriedPlays <= Int.MAX_VALUE) { "A play count in the history file is too large" }
+    return playHistoryEntryFrom(json, lastSeenPlayerCount, carriedPlays)
+}
+
+private fun playHistoryEntryFrom(json: JSONObject, lastSeenPlayerCount: Int, carriedPlays: Int) = PlayHistoryEntry(
     folderPath = json.getString("folderPath"),
     fileName = json.getString("fileName"),
     cueTitle = json.optString("cueTitle", ""),
     title = json.getString("title"),
     artist = json.getString("artist"),
     album = json.getString("album"),
-    lastSeenPlayerCount = json.getInt("lastSeenPlayerCount"),
-    carriedPlays = json.getInt("carriedPlays"),
+    lastSeenPlayerCount = lastSeenPlayerCount,
+    carriedPlays = carriedPlays,
     firstSeenAt = Instant.parse(json.getString("firstSeenAt")),
     lastPlayedAt = if (json.isNull("lastPlayedAt")) null else Instant.parse(json.getString("lastPlayedAt")),
     updatedAt = Instant.parse(json.getString("updatedAt")),

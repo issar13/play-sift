@@ -18,7 +18,7 @@ class HistorySnapshotter(
         if (access.state() != AccessState.Ready) return
         try {
             // The cutoff only matters to the lists, not to AllTracks.
-            history.record(library.tracks(LibraryList.AllTracks, Period.ZERO, clock.instant()))
+            inObservationOrder { history.record(library.tracks(LibraryList.AllTracks, Period.ZERO, clock.instant())) }
         } catch (_: SecurityException) {
             return
         }

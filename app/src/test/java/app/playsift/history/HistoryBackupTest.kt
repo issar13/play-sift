@@ -132,4 +132,41 @@ class HistoryBackupTest {
     fun decodeRejectsAnUnknownVersion() {
         assertThrows(IllegalArgumentException::class.java) { decodeHistory("""{"version":99,"entries":[]}""") }
     }
+
+    private fun backupWithCounts(lastSeenPlayerCount: Long, carriedPlays: Long) =
+        """{"version":1,"exportedAt":"2026-11-21T00:00:00Z","entries":[{"folderPath":"primary/Music/","fileName":"a.mp3","cueTitle":"","title":"A","artist":"B","album":"C","lastSeenPlayerCount":$lastSeenPlayerCount,"carriedPlays":$carriedPlays,"firstSeenAt":"2026-01-01T00:00:00Z","lastPlayedAt":null,"updatedAt":"2026-01-01T00:00:00Z"}]}"""
+
+    @Test
+    fun decodeRejectsNegativePlayCounts() {
+        assertThrows(IllegalArgumentException::class.java) { decodeHistory(backupWithCounts(lastSeenPlayerCount = 5, carriedPlays = -5)) }
+        assertThrows(IllegalArgumentException::class.java) { decodeHistory(backupWithCounts(lastSeenPlayerCount = -1, carriedPlays = 0)) }
+    }
+
+    @Test
+    fun decodeRejectsCountsWhoseTotalDoesNotFitAnInt() {
+        val almostFull = Int.MAX_VALUE.toLong()
+
+        assertThrows(IllegalArgumentException::class.java) { decodeHistory(backupWithCounts(almostFull, 1)) }
+    }
+
+    @Test
+    fun decodeAcceptsLargeCountsThatStillFit() {
+        val entries = decodeHistory(backupWithCounts(lastSeenPlayerCount = 1_000, carriedPlays = Int.MAX_VALUE - 1_000L))
+
+        assertEquals(Int.MAX_VALUE, entries.single().totalPlays)
+    }
+
+    @Test
+    fun readingStopsWithAnErrorWhenTheFileIsOverTheLimit() {
+        val oversized = ByteArray(11) { 'a'.code.toByte() }
+
+        assertThrows(BackupTooLargeException::class.java) { readBackupText(oversized.inputStream(), maxBytes = 10) }
+    }
+
+    @Test
+    fun aFileWithinTheLimitIsReadWhole() {
+        val text = "{\"version\":1}"
+
+        assertEquals(text, readBackupText(text.byteInputStream(), maxBytes = text.length))
+    }
 }
