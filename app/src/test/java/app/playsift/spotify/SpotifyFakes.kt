@@ -121,7 +121,11 @@ class InMemorySendStore(initial: SavedSend? = null) : SendStore {
         storedRequest = request
     }
 
+    /** When set, [save] throws it, like a write that fails. */
+    var saveFailure: Exception? = null
+
     override suspend fun save(saved: SavedSend) {
+        saveFailure?.let { throw it }
         savedState.value = saved
     }
 

@@ -825,6 +825,48 @@ class SpotifyViewModelTest {
     }
 
     @Test
+    fun aFailedSaveOfTheTrashedSongsShowsAMessageAndTheNextSaveIncludesThem() = runTest(dispatcher) {
+        store.save(savedSend(added = listOf(matchedSong(1, "One"), matchedSong(2, "Two"), matchedSong(3, "Three"))))
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        store.saveFailure = java.io.IOException("disk full")
+        viewModel.songsMovedToTrash(setOf(1L))
+        advanceUntilIdle()
+
+        assertEquals("Couldn't save the result list. The songs are in the trash.", viewModel.state.value.message)
+        assertEquals(listOf(1L, 2L, 3L), done(viewModel).offer.map { it.track.id })
+
+        store.saveFailure = null
+        viewModel.songsMovedToTrash(setOf(2L))
+        advanceUntilIdle()
+
+        assertEquals(listOf(3L), done(viewModel).offer.map { it.track.id })
+    }
+
+    @Test
+    fun signedInDoesNotWaitForTheProfileName() = runTest(dispatcher) {
+        val gate = CompletableDeferred<String>()
+        val slowApi = object : FakeSpotifyApi() {
+            override suspend fun currentUserName() = gate.await()
+        }
+        store.save(savedSend(added = listOf(matchedSong(1, "One"))))
+        val viewModel = viewModel(spotifyApi = slowApi)
+        advanceUntilIdle()
+
+        assertTrue(viewModel.state.value.isSignedIn)
+        assertEquals(null, viewModel.state.value.userName)
+
+        viewModel.backToSetup()
+        advanceUntilIdle()
+        assertEquals(SpotifyStage.Setup, viewModel.state.value.stage)
+
+        gate.complete("Late Name")
+        advanceUntilIdle()
+        assertEquals("Late Name", viewModel.state.value.userName)
+    }
+
+    @Test
     fun theDecisionButtonsAreLockedWhileADecisionIsSaved() = runTest(dispatcher) {
         store.save(savedSend(unsure = listOf(unsureSong(2, "Maybe"))))
         val viewModel = viewModel()
