@@ -22,9 +22,10 @@ class SendRunnerTest {
         listOf(songTrack(1, title = "One", playCount = 30), songTrack(2, title = "Two", playCount = 20), songTrack(3, title = "Three", playCount = 10))
     }
     private val progress = mutableListOf<Pair<Int, Int>>()
+    private val rateLimitWaits = mutableListOf<Long>()
     private var publishingCount = 0
 
-    private suspend fun run(request: SendRequest) = runner.run(request, { done, total -> progress += done to total }, { publishingCount += 1 })
+    private suspend fun run(request: SendRequest) = runner.run(request, { done, total -> progress += done to total }, { publishingCount += 1 }, { seconds -> rateLimitWaits += seconds })
 
     @Test
     fun reportsProgressForEverySongThenPublishes() = runTest {
@@ -125,10 +126,34 @@ class SendRunnerTest {
     }
 
     @Test
+    fun theRateLimitWaitHookHearsTheSecondsTheApiWaits() = runTest {
+        api.beforeSearch = { kotlin.coroutines.coroutineContext[RateLimitWaitHook]!!.onWait(300) }
+
+        run(sendRequest(tickedTracks = listOf(songTrack(9))))
+
+        assertEquals(listOf(300L), rateLimitWaits)
+    }
+
+    @Test
+    fun aRateLimitedSendExplainsTheWaitInMinutesRoundedUp() = runTest {
+        api.failure = SpotifyHttpException(429, "slow", retryAfterSeconds = 90)
+
+        val saved = run(sendRequest(tickedTracks = listOf(songTrack(9))))
+
+        assertTrue(saved.failureMessage!!.contains("pause for about 2 minutes"))
+        assertTrue(saved.failureMessage!!.contains("sending again picks up where this stopped"))
+    }
+
+    @Test
+    fun aRateLimitedSendWithoutRetryAfterSaysAFewMinutes() {
+        assertTrue(failureText(SpotifyHttpException(429, "slow")).contains("pause for about a few minutes"))
+    }
+
+    @Test
     fun cancellingKeepsTheMatchesFoundSoFar() = runTest {
         api.catalogue = mapOf("One" to listOf(spotifyTrack("One")), "Two" to listOf(spotifyTrack("Two")), "Three" to listOf(spotifyTrack("Three")))
         val cancelled = failureOf<CancellationException> {
-            runner.run(sendRequest(SourceChoice.EverythingPlayed), { done, _ -> if (done == 2) throw CancellationException("stop") }, {})
+            runner.run(sendRequest(SourceChoice.EverythingPlayed), { done, _ -> if (done == 2) throw CancellationException("stop") }, {}, {})
         }
 
         assertNotNull(cancelled)

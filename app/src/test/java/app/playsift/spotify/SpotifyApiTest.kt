@@ -4,6 +4,7 @@ import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -86,27 +87,62 @@ class SpotifyApiTest {
         val results = api.searchTracks("A", "B")
 
         assertEquals(emptyList<SpotifyTrack>(), results)
-        assertEquals(listOf(3_000L), pauses)
+        assertEquals(listOf(3_000L, 250L), pauses)
         assertEquals(2, server.requestCount)
     }
 
     @Test
     fun repeatedRateLimitingEventuallyFails() = runTest {
-        repeat(10) { server.enqueue(reply(429, retryAfter = "1")) }
+        repeat(11) { server.enqueue(reply(429, retryAfter = "1")) }
 
         val failure = failureOf<SpotifyHttpException> { api.searchTracks("A", "B") }
 
         assertEquals(429, failure.status)
-        assertEquals(5, pauses.size)
+        assertEquals(10, pauses.count { it == 1_000L })
     }
 
     @Test
-    fun aVeryLongRetryAfterIsNotWaitedOut() = runTest {
-        server.enqueue(reply(429, retryAfter = "3600"))
+    fun aFiveMinuteRetryAfterIsWaitedOutAndTheWorkerIsToldTheSeconds() = runTest {
+        server.enqueue(reply(429, retryAfter = "300"))
+        server.enqueue(reply(200, """{"tracks":{"items":[]}}"""))
+        val heard = mutableListOf<Long>()
 
-        failureOf<SpotifyHttpException> { api.searchTracks("A", "B") }
+        withContext(RateLimitWaitHook { seconds -> heard += seconds }) { api.searchTracks("A", "B") }
 
+        assertEquals(listOf(300L), heard)
+        assertEquals(listOf(300_000L, 250L), pauses)
+    }
+
+    @Test
+    fun aRetryAfterPastTenMinutesIsNotWaitedOutAndIsOnTheException() = runTest {
+        server.enqueue(reply(429, retryAfter = "601"))
+
+        val failure = failureOf<SpotifyHttpException> { api.searchTracks("A", "B") }
+
+        assertEquals(601L, failure.retryAfterSeconds)
         assertEquals(emptyList<Long>(), pauses)
+    }
+
+    @Test
+    fun optionSearchKeepsTheShortCap() = runTest {
+        server.enqueue(reply(429, retryAfter = "300"))
+
+        val failure = failureOf<SpotifyHttpException> { api.searchOptions("Halo") }
+
+        assertEquals(300L, failure.retryAfterSeconds)
+        assertEquals(emptyList<Long>(), pauses)
+    }
+
+    @Test
+    fun aShortPauseSeparatesConsecutiveRequests() = runTest {
+        server.enqueue(reply(200, """{"tracks":{"items":[]}}"""))
+        server.enqueue(reply(200, """{"tracks":{"items":[]}}"""))
+
+        api.searchTracks("A", "B")
+        assertEquals(emptyList<Long>(), pauses)
+        api.searchTracks("C", "D")
+
+        assertEquals(listOf(250L), pauses)
     }
 
     @Test

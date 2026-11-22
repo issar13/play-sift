@@ -3,6 +3,7 @@ package app.playsift.spotify
 import app.playsift.player.PlayerPlaylists
 import app.playsift.player.PlayerTrack
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withContext
 
 const val NONE_MATCHED_MESSAGE = "None of these songs could be matched on Spotify, so no playlist was made."
 
@@ -21,9 +22,10 @@ class SendRunner(
         request: SendRequest,
         onProgress: suspend (done: Int, total: Int) -> Unit,
         onPublishing: suspend () -> Unit,
+        onRateLimitWait: suspend (seconds: Long) -> Unit,
     ): SavedSend =
         try {
-            send(request, onProgress, onPublishing)
+            withContext(RateLimitWaitHook(onRateLimitWait)) { send(request, onProgress, onPublishing) }
         } catch (exception: CancellationException) {
             throw exception
         } catch (exception: Exception) {
@@ -79,6 +81,15 @@ fun failureText(exception: Exception): String =
         exception.status == STATUS_UNAUTHORIZED -> SIGNED_OUT_TEXT
         exception.status == STATUS_FORBIDDEN ->
             "Spotify refused the request. Make sure your account is added to the app in the Spotify developer dashboard."
-        exception.status == STATUS_TOO_MANY_REQUESTS -> "Spotify is busy right now. Try again in a minute."
+        exception.status == STATUS_TOO_MANY_REQUESTS ->
+            "Spotify asked Play Sift to pause for about ${exception.retryAfterSeconds?.let { minutesText(minutesToWait(it)) } ?: "a few minutes"}. " +
+                "Songs matched so far are saved, so sending again picks up where this stopped."
         else -> "Spotify answered with an error (${exception.status}). Try again in a minute."
     }
+
+private const val SECONDS_PER_MINUTE = 60L
+
+/** Whole minutes to wait, rounded up and at least 1. */
+fun minutesToWait(seconds: Long): Long = maxOf(1L, (seconds + SECONDS_PER_MINUTE - 1) / SECONDS_PER_MINUTE)
+
+private fun minutesText(minutes: Long) = if (minutes == 1L) "1 minute" else "$minutes minutes"

@@ -19,6 +19,9 @@ sealed interface SendWorkState {
     data class Matching(val done: Int, val total: Int) : SendWorkState
 
     data object Publishing : SendWorkState
+
+    /** Spotify asked the send to wait; the notification says for about how long. */
+    data class WaitingForSpotify(val seconds: Long) : SendWorkState
 }
 
 enum class StartOutcome { Started, AlreadyRunning }

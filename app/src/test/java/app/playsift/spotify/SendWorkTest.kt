@@ -157,6 +157,16 @@ class SendWorkTest {
         assertTrue(store.saved.first()!!.failureMessage!!.contains("developer dashboard"))
     }
 
+    @Test
+    fun aRateLimitWaitDuringASendDoesNotStopIt() = waiting {
+        api.beforeSearch = { title -> if (title == "Two") kotlin.coroutines.coroutineContext[RateLimitWaitHook]!!.onWait(90) }
+
+        scheduler.start(request)
+        waitForState(SendWorkState.Idle)
+
+        assertEquals(listOf(1L, 2L, 3L), store.saved.first()!!.result.added.map { it.track.id })
+    }
+
     private companion object {
         const val WAIT_MILLIS = 20_000L
     }

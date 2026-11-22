@@ -461,7 +461,7 @@ class SpotifyViewModelTest {
         val runner = SendRunner(SongMatcher(api, dao, clock), PlaylistPublisher(api, dao), FakePlayerPlaylists()) { emptyList() }
         val request = sendRequest(tickedTracks = listOf(songTrack(1, title = "Sure"), songTrack(2, title = "Maybe")))
 
-        store.save(runner.run(request, { _, _ -> }, {}))
+        store.save(runner.run(request, { _, _ -> }, {}, {}))
         val viewModel = viewModel()
         advanceUntilIdle()
 
@@ -628,7 +628,7 @@ class SpotifyViewModelTest {
         advanceUntilIdle()
 
         val picker = viewModel.state.value.picker!!
-        assertEquals("Spotify is busy right now. Try again in a minute.", picker.errorMessage)
+        assertEquals(failureText(SpotifyHttpException(429, "slow down")), picker.errorMessage)
         assertTrue(picker.options.isEmpty())
     }
 
