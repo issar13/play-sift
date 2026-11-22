@@ -5,6 +5,7 @@ import java.time.Instant
 import java.time.ZoneOffset
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -147,6 +148,42 @@ class SpotifyTransferTest {
     }
 
     @Test
+    fun tickedSongsWithANewNameMakeANewPlaylist() = runTest {
+        val publisher = PlaylistPublisher(api, dao)
+
+        val roadTrip = publisher.publish(SendSource.TickedSongs, "Road trip", listOf("spotify:track:a"))
+        val gym = publisher.publish(SendSource.TickedSongs, "Gym", listOf("spotify:track:b"))
+
+        assertEquals(listOf("Road trip", "Gym"), api.createdNames)
+        assertNotEquals(roadTrip.id, gym.id)
+        assertEquals(listOf(roadTrip.id to listOf("spotify:track:a"), gym.id to listOf("spotify:track:b")), api.replaceCalls)
+    }
+
+    @Test
+    fun tickedSongsWithTheSameNameUpdateThatPlaylist() = runTest {
+        val publisher = PlaylistPublisher(api, dao)
+
+        val first = publisher.publish(SendSource.TickedSongs, "Road trip", listOf("spotify:track:a"))
+        publisher.publish(SendSource.TickedSongs, "Gym", listOf("spotify:track:b"))
+        val third = publisher.publish(SendSource.TickedSongs, " road trip ", listOf("spotify:track:c"))
+
+        assertEquals(2, api.createdNames.size)
+        assertEquals(first.id, third.id)
+        assertEquals(first.id to listOf("spotify:track:c"), api.replaceCalls.last())
+    }
+
+    @Test
+    fun topPlayedKeepsOnePlaylistWhateverTheName() = runTest {
+        val publisher = PlaylistPublisher(api, dao)
+
+        val first = publisher.publish(SendSource.TopPlayed(100), "Top 100", listOf("spotify:track:a"))
+        val second = publisher.publish(SendSource.TopPlayed(100), "Something else", listOf("spotify:track:b"))
+
+        assertEquals(1, api.createdNames.size)
+        assertEquals(first.id, second.id)
+    }
+
+    @Test
     fun aPlaylistDeletedOnSpotifyIsReplacedByANewOne() = runTest {
         val publisher = PlaylistPublisher(api, dao)
         val first = publisher.publish(SendSource.TickedSongs, "Picks", listOf("spotify:track:a"))
@@ -155,7 +192,7 @@ class SpotifyTransferTest {
         val second = publisher.publish(SendSource.TickedSongs, "Picks", listOf("spotify:track:a"))
 
         assertEquals(2, api.createdNames.size)
-        assertEquals(second.id, dao.playlists.getValue("ticked").playlistId)
+        assertEquals(second.id, dao.playlists.getValue("ticked:picks").playlistId)
     }
 
     @Test

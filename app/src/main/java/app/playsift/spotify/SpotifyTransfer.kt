@@ -5,13 +5,20 @@ import app.playsift.history.historyKey
 import app.playsift.player.PlayerTrack
 import java.time.Clock
 
-/** Where a playlist's songs come from. [key] names the playlist Play Sift remembers, so a re-run replaces it. */
+/**
+ * Where a playlist's songs come from. [key] names the playlist Play Sift remembers, so a re-run replaces it.
+ * [playlistKey] is the remembered playlist for a typed name: most sources keep one, ticked songs keep one per name.
+ */
 sealed class SendSource(val key: String, val defaultName: String) {
+    open fun playlistKey(name: String): String = key
+
     data class TopPlayed(val count: Int) : SendSource("top", "Play Sift top $count")
 
     data object EverythingPlayed : SendSource("played", "Play Sift played")
 
-    data object TickedSongs : SendSource("ticked", "Play Sift picks")
+    data object TickedSongs : SendSource("ticked", "Play Sift picks") {
+        override fun playlistKey(name: String): String = "$key:${name.trim().lowercase()}"
+    }
 }
 
 /** Songs a source holds, in play-count order for the played sources. [mergedTracks] carry total plays. */
@@ -94,16 +101,17 @@ class SongMatcher(private val api: SpotifyApi, private val dao: SpotifyDao, priv
 /** Makes or refreshes the Spotify playlist for a source. */
 class PlaylistPublisher(private val api: SpotifyApi, private val dao: SpotifyDao) {
     /**
-     * Fills the playlist remembered for [source] (or a new one) with [uris], first batch replacing the old items
+     * Fills the playlist remembered for [source] and [name] (or a new one) with [uris], first batch replacing the old items
      * and the rest appended, 100 at a time. A remembered playlist that was deleted on Spotify is replaced by a new one.
      */
     suspend fun publish(source: SendSource, name: String, uris: List<String>): SpotifyPlaylist {
-        val remembered = dao.playlistFor(source.key)
+        val playlistKey = source.playlistKey(name)
+        val remembered = dao.playlistFor(playlistKey)
         val playlist = remembered?.let { SpotifyPlaylist(it.playlistId, it.url) }
         val reused = playlist?.let { tryFill(it, uris) }
         if (reused != null) return reused
         val created = api.createPlaylist(name)
-        dao.upsertPlaylist(SpotifyPlaylistEntry(source.key, created.id, created.url))
+        dao.upsertPlaylist(SpotifyPlaylistEntry(playlistKey, created.id, created.url))
         fill(created, uris)
         return created
     }
