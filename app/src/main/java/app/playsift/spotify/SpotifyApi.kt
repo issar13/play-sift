@@ -14,8 +14,10 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
+@Serializable
 data class SpotifyTrack(val uri: String, val title: String, val artists: List<String>, val durationMillis: Long)
 
+@Serializable
 data class SpotifyPlaylist(val id: String, val url: String)
 
 /** [status] is the HTTP status Spotify answered with. */

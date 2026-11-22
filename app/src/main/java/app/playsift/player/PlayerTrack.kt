@@ -1,7 +1,9 @@
 package app.playsift.player
 
 import java.time.Instant
+import kotlinx.serialization.Serializable
 
+@Serializable
 data class PlayerTrack(
     val id: Long,
     val title: String,
@@ -13,7 +15,7 @@ data class PlayerTrack(
     val isCueTrack: Boolean,
     val isUserAdded: Boolean,
     val playCount: Int,
-    val lastPlayedAt: Instant?,
-    val firstSeenAt: Instant,
+    @Serializable(with = InstantIsoSerializer::class) val lastPlayedAt: Instant?,
+    @Serializable(with = InstantIsoSerializer::class) val firstSeenAt: Instant,
     val durationMillis: Long,
 )

@@ -20,16 +20,18 @@ fun spotifyTrack(title: String, artist: String = "Artist", durationMillis: Long 
     SpotifyTrack(uri = uri, title = title, artists = listOf(artist), durationMillis = durationMillis)
 
 /** Answers searches from [catalogue] keyed by the searched title and records every call. No network. */
-class FakeSpotifyApi(var catalogue: Map<String, List<SpotifyTrack>> = emptyMap()) : SpotifyApi {
+open class FakeSpotifyApi(var catalogue: Map<String, List<SpotifyTrack>> = emptyMap()) : SpotifyApi {
     val searchedTitles = mutableListOf<String>()
     val createdNames = mutableListOf<String>()
     val replaceCalls = mutableListOf<Pair<String, List<String>>>()
     val addCalls = mutableListOf<Pair<String, List<String>>>()
     var deletedPlaylistIds = setOf<String>()
     var failure: Exception? = null
+    var beforeSearch: suspend (title: String) -> Unit = {}
 
     override suspend fun searchTracks(title: String, artist: String): List<SpotifyTrack> {
         failure?.let { throw it }
+        beforeSearch(title)
         searchedTitles += title
         return catalogue[title].orEmpty()
     }
@@ -80,3 +82,59 @@ suspend inline fun <reified T : Throwable> failureOf(block: () -> Unit): T =
     } catch (failure: Throwable) {
         if (failure is T) failure else throw failure
     }
+
+class InMemorySendStore(initial: SavedSend? = null) : SendStore {
+    private val savedState = kotlinx.coroutines.flow.MutableStateFlow(initial)
+    var storedRequest: SendRequest? = null
+    override val saved: kotlinx.coroutines.flow.Flow<SavedSend?> = savedState
+
+    override suspend fun request() = storedRequest
+
+    override suspend fun saveRequest(request: SendRequest) {
+        storedRequest = request
+    }
+
+    override suspend fun save(saved: SavedSend) {
+        savedState.value = saved
+    }
+
+    override suspend fun clearSaved() {
+        savedState.value = null
+    }
+}
+
+class FakeSendScheduler(var outcome: StartOutcome = StartOutcome.Started) : SendScheduler {
+    val workState = kotlinx.coroutines.flow.MutableStateFlow<SendWorkState>(SendWorkState.Idle)
+    val startedRequests = mutableListOf<SendRequest>()
+    var cancelCount = 0
+    override val state: kotlinx.coroutines.flow.Flow<SendWorkState> = workState
+
+    override suspend fun start(request: SendRequest): StartOutcome {
+        startedRequests += request
+        return outcome
+    }
+
+    override fun cancel() {
+        cancelCount += 1
+    }
+}
+
+fun sendRequest(
+    choice: SourceChoice = SourceChoice.TickedSongs,
+    topCount: Int = 100,
+    playlistName: String = "Play Sift picks",
+    tickedTracks: List<app.playsift.player.PlayerTrack> = emptyList(),
+) = SendRequest(choice, topCount, playlistName, tickedTracks)
+
+fun savedSend(
+    added: List<MatchedSong> = emptyList(),
+    unsure: List<UnsureSong> = emptyList(),
+    notFound: List<app.playsift.player.PlayerTrack> = emptyList(),
+    playlist: SpotifyPlaylist? = SpotifyPlaylist("playlist-1", "https://open.spotify.com/playlist/playlist-1"),
+) = SavedSend(
+    choice = SourceChoice.TickedSongs,
+    topCount = 100,
+    playlistName = "Play Sift picks",
+    result = SendResult(playlist, added, skippedUnsure = emptyList(), notFound = notFound),
+    unsure = unsure,
+)

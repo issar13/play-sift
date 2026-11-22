@@ -7,7 +7,10 @@ import app.playsift.files.FileSizes
 import app.playsift.files.fileLocation
 import app.playsift.player.PlayerTrack
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -21,7 +24,8 @@ class SpotifyViewModel(
     private val matcher: SongMatcher,
     private val publisher: PlaylistPublisher,
     private val fileSizes: FileSizes,
-    private val loadMergedTracks: suspend () -> List<PlayerTrack>,
+    private val store: SendStore,
+    private val scheduler: SendScheduler,
     private val builtInClientId: String,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(
@@ -39,12 +43,18 @@ class SpotifyViewModel(
     )
     val state: StateFlow<SpotifyUiState> = mutableState
 
-    private var sendJob: Job? = null
+    private val decisionLock = Mutex()
 
     init {
         viewModelScope.launch {
             mutableState.update { it.copy(clientIdOverride = clientId.override()) }
             refreshSignInState()
+        }
+        viewModelScope.launch {
+            combine(store.saved, scheduler.state) { saved, work -> saved to work }.collect { (saved, work) ->
+                val stage = stageFor(saved, work)
+                mutableState.update { it.copy(stage = stage) }
+            }
         }
     }
 
@@ -90,12 +100,12 @@ class SpotifyViewModel(
         viewModelScope.launch { clientId.setOverride(text) }
     }
 
-    /** Called by the lists when the user ticks songs and taps Send to Spotify. */
+    /** Called by the lists when the user ticks songs and taps Send to Spotify. A running send is left alone. */
     fun useTickedSongs(tracks: List<PlayerTrack>) {
-        sendJob?.cancel()
         mutableState.update {
-            it.copy(choice = SourceChoice.TickedSongs, tickedTracks = tracks, playlistName = SendSource.TickedSongs.defaultName, stage = SpotifyStage.Setup)
+            it.copy(choice = SourceChoice.TickedSongs, tickedTracks = tracks, playlistName = SendSource.TickedSongs.defaultName)
         }
+        viewModelScope.launch { store.clearSaved() }
     }
 
     fun chooseSource(choice: SourceChoice) =
@@ -108,45 +118,38 @@ class SpotifyViewModel(
 
     fun messageShown() = mutableState.update { it.copy(message = null) }
 
+    /** Forgets the last result (and any unsure songs still waiting) so the setup form shows again. */
     fun backToSetup() {
-        sendJob?.cancel()
-        mutableState.update { it.copy(stage = SpotifyStage.Setup) }
+        viewModelScope.launch { store.clearSaved() }
     }
 
+    /** Stops the background send; songs matched so far stay cached for the next run. */
+    fun cancelSend() = scheduler.cancel()
+
+    /** Hands the send to the background worker; only one send runs at a time. */
     fun send() {
         val current = mutableState.value
-        sendJob?.cancel()
-        sendJob = viewModelScope.launch {
-            guardedStage {
-                val source = sourceFor(current.choice, current.topCount)
-                mutableState.update { it.copy(stage = SpotifyStage.Matching(done = 0, total = 0)) }
-                val tracks = tracksFor(source, mergedTracksIfNeeded(source), current.tickedTracks)
-                val report = matcher.match(tracks) { done, total -> mutableState.update { it.copy(stage = SpotifyStage.Matching(done, total)) } }
-                continueAfterMatching(
-                    SpotifyStage.ConfirmingUnsure(source, current.playlistName.trim(), report.matched, report.unsure, emptyList(), report.notFound),
-                )
-            }
+        val request = SendRequest(
+            choice = current.choice,
+            topCount = current.topCount,
+            playlistName = current.playlistName,
+            tickedTracks = if (current.choice == SourceChoice.TickedSongs) current.tickedTracks else emptyList(),
+        )
+        viewModelScope.launch {
+            if (scheduler.start(request) == StartOutcome.AlreadyRunning) showMessage(ALREADY_RUNNING_MESSAGE)
         }
     }
 
-    fun confirmUnsure() {
-        val confirming = mutableState.value.stage as? SpotifyStage.ConfirmingUnsure ?: return
-        viewModelScope.launch {
-            guardedStage {
-                val confirmed = matcher.confirm(confirming.pending.first())
-                continueAfterMatching(confirming.copy(matched = confirming.matched + confirmed, pending = confirming.pending.drop(1)))
-            }
+    fun confirmUnsure() =
+        resolveFirstUnsure { saved, unsure ->
+            val confirmed = matcher.confirm(unsure)
+            saved.copy(result = saved.result.copy(added = saved.result.added + confirmed), unsure = saved.unsure.drop(1))
         }
-    }
 
-    fun skipUnsure() {
-        val confirming = mutableState.value.stage as? SpotifyStage.ConfirmingUnsure ?: return
-        viewModelScope.launch {
-            guardedStage {
-                continueAfterMatching(confirming.copy(pending = confirming.pending.drop(1), skipped = confirming.skipped + confirming.pending.first()))
-            }
+    fun skipUnsure() =
+        resolveFirstUnsure { saved, unsure ->
+            saved.copy(result = saved.result.copy(skippedUnsure = saved.result.skippedUnsure + unsure), unsure = saved.unsure.drop(1))
         }
-    }
 
     fun toggleOffered(trackId: Long) = updateDone { done ->
         done.copy(selectedIds = if (trackId in done.selectedIds) done.selectedIds - trackId else done.selectedIds + trackId)
@@ -159,34 +162,48 @@ class SpotifyViewModel(
     private fun updateDone(change: (SpotifyStage.Done) -> SpotifyStage.Done) =
         mutableState.update { current -> (current.stage as? SpotifyStage.Done)?.let { current.copy(stage = change(it)) } ?: current }
 
-    private fun sourceFor(choice: SourceChoice, topCount: Int): SendSource =
-        when (choice) {
-            SourceChoice.TopPlayed -> SendSource.TopPlayed(topCount)
-            SourceChoice.EverythingPlayed -> SendSource.EverythingPlayed
-            SourceChoice.TickedSongs -> SendSource.TickedSongs
+    private suspend fun stageFor(saved: SavedSend?, work: SendWorkState): SpotifyStage =
+        when {
+            work is SendWorkState.Matching -> SpotifyStage.Matching(work.done, work.total)
+            work == SendWorkState.Publishing -> SpotifyStage.Publishing
+            saved == null -> SpotifyStage.Setup
+            saved.failureMessage != null -> SpotifyStage.Failed(saved.failureMessage)
+            else -> doneStage(saved)
         }
 
-    private suspend fun mergedTracksIfNeeded(source: SendSource): List<PlayerTrack> =
-        if (source == SendSource.TickedSongs) emptyList() else loadMergedTracks()
+    private suspend fun doneStage(saved: SavedSend): SpotifyStage.Done {
+        val offer = offerFor(saved.result)
+        val keptSelection = (mutableState.value.stage as? SpotifyStage.Done)?.selectedIds.orEmpty()
+        return SpotifyStage.Done(saved.result, saved.unsure, offer, selectedIds = keptSelection.intersect(offer.map { it.track.id }.toSet()))
+    }
 
-    /** Asks about the next unsure song, or makes the playlist once none are left. */
-    private suspend fun continueAfterMatching(confirming: SpotifyStage.ConfirmingUnsure) {
-        if (confirming.pending.isNotEmpty()) {
-            mutableState.update { it.copy(stage = confirming) }
-        } else if (confirming.matched.isEmpty()) {
-            mutableState.update { it.copy(stage = SpotifyStage.Failed("None of these songs could be matched on Spotify, so no playlist was made.")) }
-        } else {
-            publish(confirming)
+    /** Decides the unsure song on screen. The playlist is updated once the last one is decided, if any was added. */
+    private fun resolveFirstUnsure(decide: suspend (SavedSend, UnsureSong) -> SavedSend) {
+        viewModelScope.launch {
+            decisionLock.withLock {
+                val saved = store.saved.first() ?: return@launch
+                val unsure = saved.unsure.firstOrNull() ?: return@launch
+                try {
+                    store.save(updatePlaylistWhenSettled(decide(saved, unsure)))
+                } catch (exception: CancellationException) {
+                    throw exception
+                } catch (exception: Exception) {
+                    showMessage(failureText(exception))
+                }
+            }
         }
     }
 
-    private suspend fun publish(confirming: SpotifyStage.ConfirmingUnsure) {
-        mutableState.update { it.copy(stage = SpotifyStage.Publishing) }
-        val name = confirming.playlistName.ifBlank { confirming.source.defaultName }
-        val playlist = publisher.publish(confirming.source, name, uniqueUris(confirming.matched))
-        val result = SendResult(playlist, confirming.matched, confirming.skipped, confirming.notFound)
-        mutableState.update { it.copy(stage = SpotifyStage.Done(result, offerFor(result), selectedIds = emptySet())) }
-    }
+    private suspend fun updatePlaylistWhenSettled(saved: SavedSend): SavedSend =
+        when {
+            saved.unsure.isNotEmpty() -> saved
+            saved.result.added.isEmpty() -> saved.copy(failureMessage = NONE_MATCHED_MESSAGE)
+            saved.result.added.any { it.wasConfirmedByUser } -> {
+                val playlist = publisher.publish(saved.source, saved.playlistName, uniqueUris(saved.result.added))
+                saved.copy(result = saved.result.copy(playlist = playlist))
+            }
+            else -> saved
+        }
 
     private suspend fun offerFor(result: SendResult): List<OfferedSong> {
         val sizes = knownSizes()
@@ -201,25 +218,6 @@ class SpotifyViewModel(
             throw exception
         } catch (_: Exception) {
             emptyMap()
-        }
-
-    private suspend fun guardedStage(action: suspend () -> Unit) {
-        try {
-            action()
-        } catch (exception: CancellationException) {
-            throw exception
-        } catch (exception: SpotifyHttpException) {
-            mutableState.update { it.copy(stage = SpotifyStage.Failed(httpFailureText(exception))) }
-        } catch (_: Exception) {
-            mutableState.update { it.copy(stage = SpotifyStage.Failed("Something went wrong talking to Spotify. Check your connection and try again.")) }
-        }
-    }
-
-    private fun httpFailureText(exception: SpotifyHttpException): String =
-        when (exception.status) {
-            STATUS_UNAUTHORIZED -> "Spotify no longer accepts the sign-in. Sign out and sign in again."
-            STATUS_FORBIDDEN -> "Spotify refused the request. Make sure your account is added to the app in the Spotify developer dashboard."
-            else -> "Spotify answered with an error (${exception.status}). Try again in a minute."
         }
 
     private suspend fun refreshSignInState() {
@@ -241,5 +239,4 @@ class SpotifyViewModel(
     private fun showMessage(text: String) = mutableState.update { it.copy(message = text) }
 }
 
-private const val STATUS_UNAUTHORIZED = 401
-private const val STATUS_FORBIDDEN = 403
+private const val ALREADY_RUNNING_MESSAGE = "A send to Spotify is already running. Wait for it to finish or cancel it first."

@@ -4,6 +4,7 @@ import app.playsift.history.HistoryKey
 import app.playsift.history.historyKey
 import app.playsift.player.PlayerTrack
 import java.time.Clock
+import kotlinx.serialization.Serializable
 
 /**
  * Where a playlist's songs come from. [key] names the playlist Play Sift remembers, so a re-run replaces it.
@@ -21,6 +22,13 @@ sealed class SendSource(val key: String, val defaultName: String) {
     }
 }
 
+fun sourceFor(choice: SourceChoice, topCount: Int): SendSource =
+    when (choice) {
+        SourceChoice.TopPlayed -> SendSource.TopPlayed(topCount)
+        SourceChoice.EverythingPlayed -> SendSource.EverythingPlayed
+        SourceChoice.TickedSongs -> SendSource.TickedSongs
+    }
+
 /** Songs a source holds, in play-count order for the played sources. [mergedTracks] carry total plays. */
 fun tracksFor(source: SendSource, mergedTracks: List<PlayerTrack>, tickedTracks: List<PlayerTrack>): List<PlayerTrack> =
     when (source) {
@@ -31,8 +39,10 @@ fun tracksFor(source: SendSource, mergedTracks: List<PlayerTrack>, tickedTracks:
 
 private fun playedByCount(mergedTracks: List<PlayerTrack>) = mergedTracks.filter { it.playCount > 0 }.sortedByDescending { it.playCount }
 
+@Serializable
 data class MatchedSong(val track: PlayerTrack, val spotifyUri: String, val wasConfirmedByUser: Boolean)
 
+@Serializable
 data class UnsureSong(val track: PlayerTrack, val candidate: SpotifyTrack)
 
 data class MatchReport(val matched: List<MatchedSong>, val unsure: List<UnsureSong>, val notFound: List<PlayerTrack>)
@@ -40,7 +50,7 @@ data class MatchReport(val matched: List<MatchedSong>, val unsure: List<UnsureSo
 /** Looks songs up on Spotify, reusing earlier matches from the local cache. */
 class SongMatcher(private val api: SpotifyApi, private val dao: SpotifyDao, private val clock: Clock) {
     /** Only automatic matches and confirmed ones are cached; unsure and missing songs are searched again next time. */
-    suspend fun match(tracks: List<PlayerTrack>, onProgress: (done: Int, total: Int) -> Unit): MatchReport {
+    suspend fun match(tracks: List<PlayerTrack>, onProgress: suspend (done: Int, total: Int) -> Unit): MatchReport {
         val cached = dao.allMatches().associateBy { HistoryKey(it.folderPath, it.fileName, it.cueTitle) }
         val results = tracks.mapIndexed { index, track ->
             val cachedMatch = cached[track.historyKey()]
@@ -135,9 +145,13 @@ class PlaylistPublisher(private val api: SpotifyApi, private val dao: SpotifyDao
     }
 }
 
-/** What the user is told after a send. [added] are the songs now in the playlist, including ones the user confirmed. */
+/**
+ * What the user is told after a send. [added] are the songs that go into the playlist, including ones the user confirmed.
+ * [playlist] is null while nothing is added yet, which happens when every match was unsure.
+ */
+@Serializable
 data class SendResult(
-    val playlist: SpotifyPlaylist,
+    val playlist: SpotifyPlaylist?,
     val added: List<MatchedSong>,
     val skippedUnsure: List<UnsureSong>,
     val notFound: List<PlayerTrack>,

@@ -39,6 +39,8 @@ Open **Send songs to Spotify** from Home or Settings. Play Sift makes a private 
 
 Songs are matched on Spotify by title, artist and length (within 5 seconds). Close matches are shown to you to confirm or skip, and songs that are not on Spotify are counted but left alone. Matches are remembered, so a second run is fast. Running the same source again updates its playlist instead of making a new one.
 
+Sending runs in the background as a foreground service with a progress notification and a Cancel button, so you can close the app or turn the screen off (Android 13 and later asks to allow notifications the first time). Songs that were only a close match are saved and listed on the result screen for you to add or skip, and the result is still there after the app is closed. Moving songs to the trash is never done in the background.
+
 When the playlist is ready you can open it in the Spotify app. Then, as a separate optional step, **Move N songs now on Spotify to trash** lists only the songs that were matched and added, all unticked, with **Select all**. It uses the same confirmation and Android trash as everywhere else, so nothing is deleted automatically and songs that are not on Spotify are never offered.
 
 This needs your own free Spotify developer app (Client ID only, no password stored) with the redirect address `playsift://spotify-callback`. Put the Client ID in `local.properties` as `spotify.clientId=...` before building, or type it in the Spotify screen.

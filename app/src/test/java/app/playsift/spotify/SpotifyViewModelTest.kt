@@ -39,8 +39,8 @@ class SpotifyViewModelTest {
     private val dao = FakeSpotifyDao()
     private val accounts = FakeAccounts()
     private val tokenStore = InMemoryTokenStore(SpotifyTokens("access", "refresh", Instant.parse("2026-11-22T01:00:00Z")))
-    private var mergedTrackLoads = 0
-    private var mergedTracks = listOf<PlayerTrack>()
+    private val store = InMemorySendStore()
+    private val scheduler = FakeSendScheduler()
 
     @Before
     fun setUp() = Dispatchers.setMain(dispatcher)
@@ -65,7 +65,8 @@ class SpotifyViewModelTest {
             matcher = SongMatcher(api, dao, clock),
             publisher = PlaylistPublisher(api, dao),
             fileSizes = fileSizes,
-            loadMergedTracks = { mergedTrackLoads += 1; mergedTracks },
+            store = store,
+            scheduler = scheduler,
             builtInClientId = builtInClientId,
         )
     }
@@ -179,42 +180,109 @@ class SpotifyViewModelTest {
         assertEquals(null, tokenStore.stored)
     }
 
+    private fun matchedSong(id: Long, title: String, confirmed: Boolean = false) =
+        MatchedSong(songTrack(id, title = title), "spotify:track:$title", confirmed)
+
+    private fun unsureSong(id: Long, title: String) = UnsureSong(songTrack(id, title = title), spotifyTrack(title, durationMillis = 90_000))
+
     @Test
-    fun sendingTopPlayedMakesANamedPlaylistAndOffersOnlyMatchedSongs() = runTest(dispatcher) {
-        mergedTracks = listOf(
-            songTrack(1, title = "One", playCount = 30),
-            songTrack(2, title = "Two", playCount = 20),
-            songTrack(3, title = "Three", playCount = 10),
-            songTrack(4, title = "Never", playCount = 0),
-        )
-        api.catalogue = mapOf("One" to listOf(spotifyTrack("One")), "Two" to listOf(spotifyTrack("Two")))
+    fun sendingHandsTheChosenSourceToTheBackgroundWork() = runTest(dispatcher) {
         val viewModel = viewModel()
         advanceUntilIdle()
-        viewModel.setTopCount(3)
+        viewModel.setTopCount(25)
+        viewModel.setPlaylistName("Mine")
 
         viewModel.send()
         advanceUntilIdle()
 
-        assertEquals(listOf("Play Sift top 3"), api.createdNames)
-        assertEquals(listOf("One", "Two", "Three"), api.searchedTitles)
-        val result = done(viewModel).result
-        assertEquals(listOf(1L, 2L), result.added.map { it.track.id })
-        assertEquals(listOf(3L), result.notFound.map { it.id })
-        assertEquals(listOf(1L, 2L), done(viewModel).offer.map { it.track.id })
-        assertEquals(listOf(5_000_000L, null), done(viewModel).offer.map { it.sizeBytes })
-        assertTrue(done(viewModel).selectedIds.isEmpty())
+        assertEquals(listOf(sendRequest(SourceChoice.TopPlayed, topCount = 25, playlistName = "Mine")), scheduler.startedRequests)
     }
 
     @Test
-    fun theOfferStartsUntickedAndSelectAllTicksEverything() = runTest(dispatcher) {
-        mergedTracks = listOf(songTrack(1, title = "One", playCount = 3), songTrack(2, title = "Two", playCount = 2))
-        api.catalogue = mapOf("One" to listOf(spotifyTrack("One")), "Two" to listOf(spotifyTrack("Two")))
+    fun tickedSongsTravelWithTheRequest() = runTest(dispatcher) {
         val viewModel = viewModel()
         advanceUntilIdle()
-        viewModel.chooseSource(SourceChoice.EverythingPlayed)
+        val ticked = listOf(songTrack(9, title = "Picked"))
+
+        viewModel.useTickedSongs(ticked)
         viewModel.send()
         advanceUntilIdle()
 
+        assertEquals(ticked, scheduler.startedRequests.single().tickedTracks)
+    }
+
+    @Test
+    fun aSecondSendWhileOneRunsShowsAMessage() = runTest(dispatcher) {
+        scheduler.outcome = StartOutcome.AlreadyRunning
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.send()
+        advanceUntilIdle()
+
+        assertTrue(viewModel.state.value.message!!.contains("already running"))
+    }
+
+    @Test
+    fun theScreenShowsTheProgressOfTheBackgroundWork() = runTest(dispatcher) {
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        scheduler.workState.value = SendWorkState.Matching(340, 2412)
+        advanceUntilIdle()
+        assertEquals(SpotifyStage.Matching(340, 2412), viewModel.state.value.stage)
+
+        scheduler.workState.value = SendWorkState.Publishing
+        advanceUntilIdle()
+        assertEquals(SpotifyStage.Publishing, viewModel.state.value.stage)
+    }
+
+    @Test
+    fun cancellingAsksTheSchedulerToStop() = runTest(dispatcher) {
+        val viewModel = viewModel()
+
+        viewModel.cancelSend()
+
+        assertEquals(1, scheduler.cancelCount)
+    }
+
+    @Test
+    fun aSavedResultIsShownWhenTheScreenIsCreatedAgain() = runTest(dispatcher) {
+        store.save(savedSend(added = listOf(matchedSong(1, "One")), unsure = listOf(unsureSong(2, "Maybe")), notFound = listOf(songTrack(3))))
+
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        val result = done(viewModel)
+        assertEquals(listOf(1L), result.result.added.map { it.track.id })
+        assertEquals(listOf(2L), result.unsure.map { it.track.id })
+        assertEquals(listOf(3L), result.result.notFound.map { it.id })
+    }
+
+    @Test
+    fun aSavedFailureIsShownAsFailed() = runTest(dispatcher) {
+        store.save(failedSend(sendRequest(), "Spotify answered with an error (500). Try again in a minute."))
+
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        assertTrue((viewModel.state.value.stage as SpotifyStage.Failed).message.contains("500"))
+    }
+
+    @Test
+    fun theOfferHoldsOnlyMatchedSongsStartsUntickedAndSelectAllTicksEverything() = runTest(dispatcher) {
+        store.save(
+            savedSend(
+                added = listOf(matchedSong(1, "One"), matchedSong(2, "Two"), matchedSong(4, "Confirmed", confirmed = true)),
+                unsure = listOf(unsureSong(5, "Maybe")),
+                notFound = listOf(songTrack(3)),
+            ),
+        )
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        assertEquals(listOf(1L, 2L), done(viewModel).offer.map { it.track.id })
+        assertEquals(listOf(5_000_000L, null), done(viewModel).offer.map { it.sizeBytes })
         assertTrue(done(viewModel).selectedIds.isEmpty())
         viewModel.selectAllOffered()
         assertEquals(setOf(1L, 2L), done(viewModel).selectedIds)
@@ -225,112 +293,82 @@ class SpotifyViewModelTest {
     }
 
     @Test
-    fun anUnsureSongIsAskedAboutAndAddedWhenConfirmedButNotOfferedForTheTrash() = runTest(dispatcher) {
-        mergedTracks = listOf(songTrack(1, title = "Sure", playCount = 3), songTrack(2, title = "Maybe", playCount = 2))
-        api.catalogue = mapOf("Sure" to listOf(spotifyTrack("Sure")), "Maybe" to listOf(spotifyTrack("Maybe", durationMillis = 90_000)))
+    fun confirmingTheLastUnsureSongUpdatesTheSamePlaylistButIsNotOfferedForTheTrash() = runTest(dispatcher) {
+        store.save(savedSend(added = listOf(matchedSong(1, "Sure")), unsure = listOf(unsureSong(2, "Maybe"))))
         val viewModel = viewModel()
         advanceUntilIdle()
 
-        viewModel.send()
-        advanceUntilIdle()
-        val asking = viewModel.state.value.stage as SpotifyStage.ConfirmingUnsure
-        assertEquals("Maybe", asking.pending.first().track.title)
         viewModel.confirmUnsure()
         advanceUntilIdle()
 
         assertEquals(listOf(1L, 2L), done(viewModel).result.added.map { it.track.id })
         assertEquals(listOf(1L), done(viewModel).offer.map { it.track.id })
+        assertTrue(done(viewModel).unsure.isEmpty())
         assertEquals(listOf("spotify:track:Sure", "spotify:track:Maybe"), api.replaceCalls.single().second)
     }
 
     @Test
-    fun aSkippedUnsureSongIsNotAddedAndNotOffered() = runTest(dispatcher) {
-        mergedTracks = listOf(songTrack(1, title = "Sure", playCount = 3), songTrack(2, title = "Maybe", playCount = 2))
-        api.catalogue = mapOf("Sure" to listOf(spotifyTrack("Sure")), "Maybe" to listOf(spotifyTrack("Maybe", durationMillis = 90_000)))
+    fun skippingTheLastUnsureSongLeavesThePlaylistAlone() = runTest(dispatcher) {
+        store.save(savedSend(added = listOf(matchedSong(1, "Sure")), unsure = listOf(unsureSong(2, "Maybe"))))
         val viewModel = viewModel()
         advanceUntilIdle()
 
-        viewModel.send()
-        advanceUntilIdle()
         viewModel.skipUnsure()
         advanceUntilIdle()
 
-        assertEquals(listOf(1L), done(viewModel).result.added.map { it.track.id })
         assertEquals(listOf(2L), done(viewModel).result.skippedUnsure.map { it.track.id })
-        assertEquals(listOf("spotify:track:Sure"), api.replaceCalls.single().second)
+        assertEquals(listOf(1L), done(viewModel).result.added.map { it.track.id })
+        assertTrue(api.replaceCalls.isEmpty())
     }
 
     @Test
-    fun sendingTheSameSourceTwiceUpdatesTheSamePlaylist() = runTest(dispatcher) {
-        mergedTracks = listOf(songTrack(1, title = "One", playCount = 3))
-        api.catalogue = mapOf("One" to listOf(spotifyTrack("One")))
+    fun confirmingAnUnsureSongWhenNothingElseMatchedMakesThePlaylist() = runTest(dispatcher) {
+        store.save(savedSend(unsure = listOf(unsureSong(2, "Maybe")), playlist = null))
         val viewModel = viewModel()
         advanceUntilIdle()
 
-        viewModel.send()
-        advanceUntilIdle()
-        viewModel.backToSetup()
-        viewModel.send()
-        advanceUntilIdle()
-
-        assertEquals(1, api.createdNames.size)
-        assertEquals(2, api.replaceCalls.size)
-        assertEquals(listOf("One"), api.searchedTitles)
-    }
-
-    @Test
-    fun tickedSongsAreSentWithoutReadingTheWholeLibrary() = runTest(dispatcher) {
-        api.catalogue = mapOf("Picked" to listOf(spotifyTrack("Picked")))
-        val viewModel = viewModel()
-        advanceUntilIdle()
-
-        viewModel.useTickedSongs(listOf(songTrack(9, title = "Picked", playCount = 0)))
-        viewModel.send()
-        advanceUntilIdle()
-
-        assertEquals(0, mergedTrackLoads)
-        assertEquals(listOf("Play Sift picks"), api.createdNames)
-        assertEquals(listOf(9L), done(viewModel).result.added.map { it.track.id })
-    }
-
-    @Test
-    fun aBlankPlaylistNameFallsBackToTheDefault() = runTest(dispatcher) {
-        api.catalogue = mapOf("Picked" to listOf(spotifyTrack("Picked")))
-        val viewModel = viewModel()
-        advanceUntilIdle()
-        viewModel.useTickedSongs(listOf(songTrack(9, title = "Picked")))
-        viewModel.setPlaylistName("   ")
-
-        viewModel.send()
+        viewModel.confirmUnsure()
         advanceUntilIdle()
 
         assertEquals(listOf("Play Sift picks"), api.createdNames)
+        assertEquals("playlist-1", done(viewModel).result.playlist!!.id)
     }
 
     @Test
-    fun whenNothingMatchesNoPlaylistIsMade() = runTest(dispatcher) {
+    fun skippingEveryUnsureSongWithNothingAddedEndsAsFailed() = runTest(dispatcher) {
+        store.save(savedSend(unsure = listOf(unsureSong(2, "Maybe")), playlist = null))
         val viewModel = viewModel()
         advanceUntilIdle()
-        viewModel.useTickedSongs(listOf(songTrack(9, title = "Nowhere")))
 
-        viewModel.send()
+        viewModel.skipUnsure()
         advanceUntilIdle()
 
         assertTrue(viewModel.state.value.stage is SpotifyStage.Failed)
-        assertTrue(api.createdNames.isEmpty())
     }
 
     @Test
-    fun aForbiddenAnswerExplainsTheDashboardRequirement() = runTest(dispatcher) {
-        api.failure = SpotifyHttpException(403, "forbidden")
+    fun backToSetupForgetsTheSavedResult() = runTest(dispatcher) {
+        store.save(savedSend(added = listOf(matchedSong(1, "One"))))
         val viewModel = viewModel()
         advanceUntilIdle()
-        viewModel.useTickedSongs(listOf(songTrack(9)))
 
-        viewModel.send()
+        viewModel.backToSetup()
         advanceUntilIdle()
 
-        val failed = viewModel.state.value.stage as SpotifyStage.Failed
-        assertTrue(failed.message.contains("developer dashboard"))
+        assertEquals(SpotifyStage.Setup, viewModel.state.value.stage)
+    }
+
+    @Test
+    fun unsureSongsFromABackgroundRunAppearOnTheResultScreen() = runTest(dispatcher) {
+        api.catalogue = mapOf("Sure" to listOf(spotifyTrack("Sure")), "Maybe" to listOf(spotifyTrack("Maybe", durationMillis = 90_000)))
+        val runner = SendRunner(SongMatcher(api, dao, clock), PlaylistPublisher(api, dao)) { emptyList() }
+        val request = sendRequest(tickedTracks = listOf(songTrack(1, title = "Sure"), songTrack(2, title = "Maybe")))
+
+        store.save(runner.run(request, { _, _ -> }, {}))
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        assertEquals(listOf("Maybe"), done(viewModel).unsure.map { it.track.title })
+        assertEquals(listOf("Sure"), done(viewModel).result.added.map { it.track.title })
     }
 }

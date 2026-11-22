@@ -42,6 +42,7 @@ class SpotifyActions(
     val onTopCountChange: (Int) -> Unit,
     val onPlaylistNameChange: (String) -> Unit,
     val onSend: () -> Unit,
+    val onCancelSend: () -> Unit,
     val onConfirmUnsure: () -> Unit,
     val onSkipUnsure: () -> Unit,
     val onOpenPlaylist: (String) -> Unit,
@@ -112,9 +113,9 @@ private fun StageSection(state: SpotifyUiState, isPreparingTrash: Boolean, actio
                 progress = { if (stage.total == 0) 0f else stage.done.toFloat() / stage.total },
                 modifier = Modifier.fillMaxWidth(),
             )
-            OutlinedButton(onClick = actions.onBackToSetup) { Text("Cancel") }
+            Text("This keeps going in the background. You can close the app.", style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick = actions.onCancelSend) { Text("Cancel") }
         }
-        is SpotifyStage.ConfirmingUnsure -> UnsureSection(stage.pending.first(), stage.pending.size, actions)
         SpotifyStage.Publishing -> {
             CircularProgressIndicator()
             Text("Making the playlist...")
@@ -186,12 +187,13 @@ private fun UnsureSection(unsure: UnsureSong, remaining: Int, actions: SpotifyAc
 private fun DoneSection(done: SpotifyStage.Done, isPreparingTrash: Boolean, actions: SpotifyActions) {
     val result = done.result
     val confirmedCount = result.added.count { it.wasConfirmedByUser }
-    Text("Playlist ready", style = MaterialTheme.typography.titleLarge)
+    Text(if (result.playlist == null) "Songs to check" else "Playlist ready", style = MaterialTheme.typography.titleLarge)
     Text("Matched: ${result.added.size - confirmedCount}")
     Text("Added after you confirmed: $confirmedCount")
     Text("Skipped as unsure: ${result.skippedUnsure.size}")
     Text("Not found: ${result.notFound.size}")
-    Button(onClick = { actions.onOpenPlaylist(result.playlist.url) }) { Text("Open in Spotify") }
+    result.playlist?.let { playlist -> Button(onClick = { actions.onOpenPlaylist(playlist.url) }) { Text("Open in Spotify") } }
+    done.unsure.firstOrNull()?.let { unsure -> UnsureSection(unsure, done.unsure.size, actions) }
     OfferSection(done, isPreparingTrash, actions)
     OutlinedButton(onClick = actions.onBackToSetup) { Text("Done") }
 }

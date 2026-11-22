@@ -6,6 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import app.playsift.history.HistorySnapshotWorker
+import app.playsift.spotify.ACTION_OPEN_SPOTIFY
 import app.playsift.spotify.SpotifyViewModel
 import app.playsift.spotify.spotifyViewModelFactory
 import app.playsift.ui.LibraryViewModel
@@ -21,7 +22,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         HistorySnapshotWorker.schedule(applicationContext)
         // A recreated activity gets the launch intent again; the sign-in callback must only be handled once.
-        if (savedInstanceState == null) handleSpotifyCallback(intent)
+        if (savedInstanceState == null) handleLaunchIntent(intent)
         setContent {
             PlaySiftTheme {
                 PlaySiftApp(viewModel, spotifyViewModel)
@@ -32,7 +33,13 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        handleSpotifyCallback(intent)
+        handleLaunchIntent(intent)
+    }
+
+    private fun handleLaunchIntent(launchIntent: Intent) {
+        handleSpotifyCallback(launchIntent)
+        // The sending notification opens the Spotify tab.
+        if (launchIntent.action == ACTION_OPEN_SPOTIFY) viewModel.showScreen(Screen.Spotify)
     }
 
     /** Spotify sends the browser back to `playsift://spotify-callback?code=...&state=...`. */

@@ -200,6 +200,15 @@ fun PlaySiftApp(viewModel: LibraryViewModel, spotifyViewModel: SpotifyViewModel)
         }
     }
     val openSignInPage: (String) -> Unit = { url -> CustomTabsIntent.Builder().build().launchUrl(context, Uri.parse(url)) }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        // Denied or not, the send runs; without the permission Android only lists it in the task manager.
+        spotifyViewModel.send()
+    }
+    val startSend: () -> Unit = {
+        val needsNotificationPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        if (needsNotificationPermission) notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) else spotifyViewModel.send()
+    }
     val spotifyActions = SpotifyActions(
         onSignIn = { spotifyViewModel.signIn(openSignInPage) },
         onSignOut = spotifyViewModel::signOut,
@@ -207,7 +216,8 @@ fun PlaySiftApp(viewModel: LibraryViewModel, spotifyViewModel: SpotifyViewModel)
         onChooseSource = spotifyViewModel::chooseSource,
         onTopCountChange = spotifyViewModel::setTopCount,
         onPlaylistNameChange = spotifyViewModel::setPlaylistName,
-        onSend = spotifyViewModel::send,
+        onSend = startSend,
+        onCancelSend = spotifyViewModel::cancelSend,
         onConfirmUnsure = spotifyViewModel::confirmUnsure,
         onSkipUnsure = spotifyViewModel::skipUnsure,
         onOpenPlaylist = openPlaylist,

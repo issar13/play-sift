@@ -12,19 +12,15 @@ sealed interface SpotifyStage {
 
     data class Matching(val done: Int, val total: Int) : SpotifyStage
 
-    /** The first of [pending] is the one on screen; [matched] holds the songs that are already going into the playlist. */
-    data class ConfirmingUnsure(
-        val source: SendSource,
-        val playlistName: String,
-        val matched: List<MatchedSong>,
-        val pending: List<UnsureSong>,
-        val skipped: List<UnsureSong>,
-        val notFound: List<PlayerTrack>,
-    ) : SpotifyStage
-
     data object Publishing : SpotifyStage
 
-    data class Done(val result: SendResult, val offer: List<OfferedSong>, val selectedIds: Set<Long>) : SpotifyStage
+    /** [unsure] songs wait for the user: the first is on screen, and adding them later updates the same playlist. */
+    data class Done(
+        val result: SendResult,
+        val unsure: List<UnsureSong>,
+        val offer: List<OfferedSong>,
+        val selectedIds: Set<Long>,
+    ) : SpotifyStage
 
     data class Failed(val message: String) : SpotifyStage
 }
