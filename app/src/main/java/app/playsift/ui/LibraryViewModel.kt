@@ -176,11 +176,15 @@ class LibraryViewModel(
      * to phone files and opens the confirmation. A file is only removable when no other song in the whole
      * library points at it, so unticked songs never lose their file. Returns null when a preparation is
      * already running or failed; a failure sets [message] and trashes nothing.
+     * [candidates] are the songs the ticks refer to: the open list by default, or the Spotify result's songs.
      */
-    suspend fun prepareTrash(selectedIds: Set<Long> = mutableState.value.selectedIds): TrashPlan? {
+    suspend fun prepareTrash(
+        selectedIds: Set<Long> = mutableState.value.selectedIds,
+        candidates: List<PlayerTrack> = mutableState.value.tracks,
+    ): TrashPlan? {
         if (!mutableIsPreparingTrash.compareAndSet(expect = false, update = true)) return null
         try {
-            val selectedTracks = mutableState.value.tracks.filter { it.id in selectedIds }
+            val selectedTracks = candidates.filter { it.id in selectedIds }
             val selectedFileKeys = selectedTracks.map { it.folderPath to it.fileName }.toSet()
             val sharingTracks = library
                 .tracks(LibraryList.AllTracks, mutableState.value.cutoff.period, clock.instant())
@@ -336,7 +340,7 @@ class LibraryViewModel(
                     sizesUnavailable = sizes == null,
                 )
             }
-            Screen.Settings -> ScreenContent(emptyList(), null, emptyMap())
+            Screen.Settings, Screen.Spotify -> ScreenContent(emptyList(), null, emptyMap())
             Screen.MostPlayed -> listContent(LibraryList.MostPlayed, allTracks, period, now)
             Screen.NeverPlayed -> listContent(LibraryList.NeverPlayed, allTracks, period, now)
             Screen.Delete -> listContent(LibraryList.DeleteCandidates, allTracks, period, now)
@@ -366,7 +370,7 @@ class LibraryViewModel(
             Screen.NeverPlayed -> LibraryList.NeverPlayed
             Screen.Delete -> LibraryList.DeleteCandidates
             Screen.Large -> LibraryList.Large
-            Screen.Home, Screen.Settings -> null
+            Screen.Home, Screen.Settings, Screen.Spotify -> null
         }
 
     private fun showEmpty(accessState: AccessState) =

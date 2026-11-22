@@ -1,0 +1,244 @@
+package app.playsift.ui
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.dp
+import app.playsift.R
+import app.playsift.spotify.OfferedSong
+import app.playsift.spotify.SourceChoice
+import app.playsift.spotify.SpotifyStage
+import app.playsift.spotify.SpotifyUiState
+import app.playsift.spotify.UnsureSong
+
+class SpotifyActions(
+    val onBack: () -> Unit,
+    val onSignIn: () -> Unit,
+    val onSignOut: () -> Unit,
+    val onClientIdChange: (String) -> Unit,
+    val onChooseSource: (SourceChoice) -> Unit,
+    val onTopCountChange: (Int) -> Unit,
+    val onPlaylistNameChange: (String) -> Unit,
+    val onSend: () -> Unit,
+    val onConfirmUnsure: () -> Unit,
+    val onSkipUnsure: () -> Unit,
+    val onOpenPlaylist: (String) -> Unit,
+    val onToggleOffered: (Long) -> Unit,
+    val onSelectAllOffered: () -> Unit,
+    val onMoveToTrash: (List<OfferedSong>) -> Unit,
+    val onBackToSetup: () -> Unit,
+)
+
+@Composable
+fun SpotifyScreen(state: SpotifyUiState, isPreparingTrash: Boolean, actions: SpotifyActions) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 8.dp)) {
+            IconButton(onClick = actions.onBack) {
+                Icon(painter = painterResource(R.drawable.ic_arrow_back), contentDescription = "Back")
+            }
+            Text("Send to Spotify", style = MaterialTheme.typography.titleLarge)
+        }
+        Column(
+            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            state.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            if (!state.isSignedIn) {
+                SignInSection(state, actions)
+            } else {
+                StageSection(state, isPreparingTrash, actions)
+                AccountSection(state, actions)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SignInSection(state: SpotifyUiState, actions: SpotifyActions) {
+    Text("Make Spotify playlists from your most played songs, everything you have played or songs you pick. Play Sift never sees your Spotify password.")
+    if (!state.hasClientId) {
+        Text("Add your Spotify app's Client ID to continue. Make a free app at developer.spotify.com and register the redirect address playsift://spotify-callback.")
+    }
+    ClientIdField(state, actions)
+    Button(onClick = actions.onSignIn, enabled = state.hasClientId) { Text("Sign in to Spotify") }
+}
+
+@Composable
+private fun ClientIdField(state: SpotifyUiState, actions: SpotifyActions) {
+    OutlinedTextField(
+        value = state.clientIdOverride,
+        onValueChange = actions.onClientIdChange,
+        label = { Text(if (state.builtInClientIdMissing) "Spotify Client ID" else "Client ID (leave empty for the built-in one)") },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
+
+@Composable
+private fun AccountSection(state: SpotifyUiState, actions: SpotifyActions) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = state.userName?.let { "Signed in as $it" } ?: "Signed in to Spotify",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        ClientIdField(state, actions)
+        OutlinedButton(onClick = actions.onSignOut) { Text("Sign out") }
+    }
+}
+
+@Composable
+private fun StageSection(state: SpotifyUiState, isPreparingTrash: Boolean, actions: SpotifyActions) {
+    when (val stage = state.stage) {
+        SpotifyStage.Setup -> SetupSection(state, actions)
+        is SpotifyStage.Matching -> {
+            Text(if (stage.total == 0) "Reading your songs..." else "Matching songs on Spotify: ${stage.done} of ${stage.total}")
+            LinearProgressIndicator(
+                progress = { if (stage.total == 0) 0f else stage.done.toFloat() / stage.total },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedButton(onClick = actions.onBackToSetup) { Text("Cancel") }
+        }
+        is SpotifyStage.ConfirmingUnsure -> UnsureSection(stage.pending.first(), stage.pending.size, actions)
+        SpotifyStage.Publishing -> {
+            CircularProgressIndicator()
+            Text("Making the playlist...")
+        }
+        is SpotifyStage.Done -> DoneSection(stage, isPreparingTrash, actions)
+        is SpotifyStage.Failed -> {
+            Text(stage.message, color = MaterialTheme.colorScheme.error)
+            OutlinedButton(onClick = actions.onBackToSetup) { Text("Back") }
+        }
+    }
+}
+
+@Composable
+private fun SetupSection(state: SpotifyUiState, actions: SpotifyActions) {
+    Text("Songs to send", style = MaterialTheme.typography.titleMedium)
+    SourceRadio("Top played", state.choice == SourceChoice.TopPlayed, true) { actions.onChooseSource(SourceChoice.TopPlayed) }
+    if (state.choice == SourceChoice.TopPlayed) {
+        OutlinedTextField(
+            value = state.topCount.toString(),
+            onValueChange = { text -> text.toIntOrNull()?.takeIf { it > 0 }?.let(actions.onTopCountChange) },
+            label = { Text("How many songs") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            singleLine = true,
+        )
+    }
+    SourceRadio("Everything played", state.choice == SourceChoice.EverythingPlayed, true) { actions.onChooseSource(SourceChoice.EverythingPlayed) }
+    SourceRadio(
+        label = "Songs you ticked (${state.tickedTracks.size})",
+        isSelected = state.choice == SourceChoice.TickedSongs,
+        isEnabled = state.tickedTracks.isNotEmpty(),
+    ) { actions.onChooseSource(SourceChoice.TickedSongs) }
+    OutlinedTextField(
+        value = state.playlistName,
+        onValueChange = actions.onPlaylistNameChange,
+        label = { Text("Playlist name") },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Text(
+        "Playlists are private. Sending the same source again updates its playlist instead of making a new one.",
+        style = MaterialTheme.typography.bodySmall,
+    )
+    Button(onClick = actions.onSend) { Text("Create playlist") }
+}
+
+@Composable
+private fun SourceRadio(label: String, isSelected: Boolean, isEnabled: Boolean, onSelect: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().selectable(selected = isSelected, enabled = isEnabled, role = Role.RadioButton, onClick = onSelect),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = isSelected, onClick = null, enabled = isEnabled)
+        Text(text = label, modifier = Modifier.padding(start = 16.dp))
+    }
+}
+
+@Composable
+private fun UnsureSection(unsure: UnsureSong, remaining: Int, actions: SpotifyActions) {
+    Text("Is this the same song? ($remaining left to check)", style = MaterialTheme.typography.titleMedium)
+    Text("Yours: ${unsure.track.title} by ${unsure.track.artist}")
+    Text("On Spotify: ${unsure.candidate.title} by ${unsure.candidate.artists.joinToString(", ")}")
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Button(onClick = actions.onConfirmUnsure) { Text("Add it") }
+        OutlinedButton(onClick = actions.onSkipUnsure) { Text("Skip") }
+    }
+}
+
+@Composable
+private fun DoneSection(done: SpotifyStage.Done, isPreparingTrash: Boolean, actions: SpotifyActions) {
+    val result = done.result
+    val confirmedCount = result.added.count { it.wasConfirmedByUser }
+    Text("Playlist ready", style = MaterialTheme.typography.titleLarge)
+    Text("Matched: ${result.added.size - confirmedCount}")
+    Text("Added after you confirmed: $confirmedCount")
+    Text("Skipped as unsure: ${result.skippedUnsure.size}")
+    Text("Not found: ${result.notFound.size}")
+    Button(onClick = { actions.onOpenPlaylist(result.playlist.url) }) { Text("Open in Spotify") }
+    OfferSection(done, isPreparingTrash, actions)
+    OutlinedButton(onClick = actions.onBackToSetup) { Text("Done") }
+}
+
+@Composable
+private fun OfferSection(done: SpotifyStage.Done, isPreparingTrash: Boolean, actions: SpotifyActions) {
+    if (done.offer.isEmpty()) return
+    val selectedSongs = done.offer.filter { it.track.id in done.selectedIds }
+    val selectedSizeBytes = selectedSongs.sumOf { it.sizeBytes ?: 0L }
+    Text("Free up space (optional)", style = MaterialTheme.typography.titleMedium)
+    Text(
+        "These songs are now on Spotify. Nothing is selected, and nothing moves until you confirm. They go to Android's trash, where you can restore them for about 30 days.",
+        style = MaterialTheme.typography.bodySmall,
+    )
+    TextButton(onClick = actions.onSelectAllOffered) { Text("Select all") }
+    done.offer.forEach { offered ->
+        val isSelected = offered.track.id in done.selectedIds
+        Row(
+            modifier = Modifier.fillMaxWidth().toggleable(value = isSelected, role = Role.Checkbox, onValueChange = { actions.onToggleOffered(offered.track.id) }),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Checkbox(checked = isSelected, onCheckedChange = null)
+            Column(modifier = Modifier.weight(1f)) {
+                Text(offered.track.title, maxLines = 1)
+                Text(offered.track.artist, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+            }
+            offered.sizeBytes?.let { sizeBytes -> Text(storageText(sizeBytes), style = MaterialTheme.typography.bodySmall) }
+        }
+    }
+    Button(
+        onClick = { actions.onMoveToTrash(selectedSongs) },
+        enabled = selectedSongs.isNotEmpty() && !isPreparingTrash,
+        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text("Move ${selectedSongs.size} songs now on Spotify to trash (${storageText(selectedSizeBytes)})")
+    }
+}

@@ -17,6 +17,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -41,17 +42,22 @@ fun TrackListScreen(
     onSelectAll: () -> Unit,
     onMoveToTrash: () -> Unit,
     isPreparingTrash: Boolean = false,
+    onSendToSpotify: () -> Unit = {},
 ) {
     val isDeleteList = state.list == LibraryList.DeleteCandidates
     Column(modifier = Modifier.fillMaxSize()) {
         if (state.list != LibraryList.MostPlayed) {
             HistoryBanner(health = state.historyHealth, cutoffLabel = state.cutoff.label)
         }
-        if (isDeleteList) {
-            TextButton(onClick = onSelectAll, modifier = Modifier.padding(horizontal = 8.dp)) { Text("Select all") }
-        }
+        TextButton(onClick = onSelectAll, modifier = Modifier.padding(horizontal = 8.dp)) { Text("Select all") }
         if (state.list == LibraryList.MostPlayed) {
-            MostPlayedList(tracks = state.tracks, today = today, modifier = Modifier.weight(1f))
+            MostPlayedList(
+                tracks = state.tracks,
+                today = today,
+                selectedIds = state.selectedIds,
+                onToggleSelected = onToggleSelected,
+                modifier = Modifier.weight(1f),
+            )
         } else {
             LazyColumn(modifier = Modifier.weight(1f)) {
                 items(state.tracks, key = { it.id }) { track ->
@@ -65,6 +71,7 @@ fun TrackListScreen(
                 }
             }
         }
+        SendToSpotifyButton(selectedCount = state.selectedIds.size, onClick = onSendToSpotify)
         if (isDeleteList) {
             Button(
                 onClick = onMoveToTrash,
@@ -83,14 +90,31 @@ fun TrackListScreen(
 }
 
 @Composable
-private fun MostPlayedList(tracks: List<PlayerTrack>, today: LocalDate, modifier: Modifier) {
+internal fun SendToSpotifyButton(selectedCount: Int, onClick: () -> Unit) {
+    OutlinedButton(
+        onClick = onClick,
+        enabled = selectedCount > 0,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        Text("Send $selectedCount to Spotify")
+    }
+}
+
+@Composable
+private fun MostPlayedList(
+    tracks: List<PlayerTrack>,
+    today: LocalDate,
+    selectedIds: Set<Long>,
+    onToggleSelected: (Long) -> Unit,
+    modifier: Modifier,
+) {
     val entries = groupByMatchingPlays(tracks)
     var expandedPlays by rememberSaveable { mutableStateOf(listOf<Int>()) }
     LazyColumn(modifier = modifier) {
         entries.forEach { entry ->
             when (entry) {
                 is MostPlayedEntry.Single -> item(key = entry.track.id) {
-                    TrackRow(entry.track, LibraryList.MostPlayed, today, isSelected = false, onToggleSelected = {})
+                    TrackRow(entry.track, LibraryList.MostPlayed, today, isSelected = entry.track.id in selectedIds, onToggleSelected = { onToggleSelected(entry.track.id) })
                 }
                 is MostPlayedEntry.Group -> {
                     val isExpanded = entry.plays in expandedPlays
@@ -107,7 +131,7 @@ private fun MostPlayedList(tracks: List<PlayerTrack>, today: LocalDate, modifier
                         )
                     }
                     items(visibleTracks, key = { track -> track.id }) { track ->
-                        TrackRow(track, LibraryList.MostPlayed, today, isSelected = false, onToggleSelected = {})
+                        TrackRow(track, LibraryList.MostPlayed, today, isSelected = track.id in selectedIds, onToggleSelected = { onToggleSelected(track.id) })
                     }
                     if (!isExpanded) {
                         item(key = "more-${entry.plays}") {
@@ -150,20 +174,12 @@ internal fun TrackRow(
     onToggleSelected: () -> Unit,
     sizeBytes: Long? = null,
 ) {
-    val isSelectable = list == LibraryList.DeleteCandidates || list == LibraryList.Large
-    val rowModifier = if (isSelectable) {
-        Modifier.toggleable(value = isSelected, role = Role.Checkbox, onValueChange = { onToggleSelected() })
-    } else {
-        Modifier
-    }
     Row(
-        modifier = rowModifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        modifier = Modifier.toggleable(value = isSelected, role = Role.Checkbox, onValueChange = { onToggleSelected() }).fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        if (isSelectable) {
-            Checkbox(checked = isSelected, onCheckedChange = null)
-        }
+        Checkbox(checked = isSelected, onCheckedChange = null)
         Column(modifier = Modifier.weight(1f)) {
             Text(text = track.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1)
             Text(text = track.artist, style = MaterialTheme.typography.bodySmall, maxLines = 1)

@@ -7,7 +7,7 @@ import app.playsift.player.LibraryList
 import app.playsift.player.PlayerTrack
 import app.playsift.settings.CutoffOption
 
-enum class Screen { Home, MostPlayed, NeverPlayed, Delete, Large, Settings }
+enum class Screen { Home, MostPlayed, NeverPlayed, Delete, Large, Settings, Spotify }
 
 data class LibraryUiState(
     val access: AccessState,

@@ -24,6 +24,7 @@ fun SettingsScreen(
     onSelect: (CutoffOption) -> Unit,
     onExportHistory: () -> Unit,
     onImportHistory: () -> Unit,
+    onOpenSpotify: () -> Unit = {},
 ) {
     Column(modifier = Modifier.padding(16.dp)) {
         Text("Never played for at least", style = MaterialTheme.typography.titleMedium)
@@ -49,5 +50,7 @@ fun SettingsScreen(
             Button(onClick = onExportHistory) { Text("Export history now") }
             OutlinedButton(onClick = onImportHistory) { Text("Import history") }
         }
+        Text("Spotify", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 24.dp))
+        OutlinedButton(onClick = onOpenSpotify, modifier = Modifier.padding(vertical = 8.dp)) { Text("Send songs to Spotify") }
     }
 }

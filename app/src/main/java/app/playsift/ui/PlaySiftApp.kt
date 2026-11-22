@@ -2,6 +2,7 @@ package app.playsift.ui
 
 import android.Manifest
 import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
@@ -13,6 +14,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -50,6 +52,8 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import app.playsift.R
+import app.playsift.player.PlayerTrack
+import app.playsift.spotify.SpotifyViewModel
 import app.playsift.files.trashRequest
 import app.playsift.player.AccessState
 import java.time.LocalDate
@@ -66,14 +70,17 @@ private val tabs = listOf(
     "Settings" to Screen.Settings,
 )
 
+private const val SPOTIFY_PACKAGE_NAME = "com.spotify.music"
+
 private val mediaPermission =
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) Manifest.permission.READ_MEDIA_AUDIO
     else Manifest.permission.READ_EXTERNAL_STORAGE
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PlaySiftApp(viewModel: LibraryViewModel) {
+fun PlaySiftApp(viewModel: LibraryViewModel, spotifyViewModel: SpotifyViewModel) {
     val state by viewModel.state.collectAsState()
+    val spotifyState by spotifyViewModel.state.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -118,7 +125,10 @@ fun PlaySiftApp(viewModel: LibraryViewModel) {
     }
     val isPreparingTrash by viewModel.isPreparingTrash.collectAsState()
     var selectionAtPermissionRequest by rememberSaveable { mutableStateOf(longArrayOf()) }
-    val prepareTrash = { selectedIds: Set<Long> -> scope.launch { viewModel.prepareTrash(selectedIds) } }
+    var trashCandidates by remember { mutableStateOf<List<PlayerTrack>?>(null) }
+    val prepareTrash = { selectedIds: Set<Long> ->
+        scope.launch { viewModel.prepareTrash(selectedIds, trashCandidates ?: state.tracks) }
+    }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
         viewModel.setFileAccess(isGranted)
         isFileAccessBlocked = !isGranted && !ActivityCompat.shouldShowRequestPermissionRationale(context.findActivity(), mediaPermission)
@@ -135,8 +145,8 @@ fun PlaySiftApp(viewModel: LibraryViewModel) {
         }
     }
 
-    val moveSelectionToTrash: () -> Unit = {
-        val selectionNow = state.selectedIds
+    val moveToTrash: (Set<Long>, List<PlayerTrack>?) -> Unit = { selectionNow, candidates ->
+        trashCandidates = candidates
         val hasPermission =
             ContextCompat.checkSelfPermission(context, mediaPermission) == PackageManager.PERMISSION_GRANTED
         when {
@@ -154,6 +164,37 @@ fun PlaySiftApp(viewModel: LibraryViewModel) {
             }
         }
     }
+    val moveSelectionToTrash: () -> Unit = { moveToTrash(state.selectedIds, null) }
+    val sendSelectionToSpotify: () -> Unit = {
+        spotifyViewModel.useTickedSongs(state.tracks.filter { it.id in state.selectedIds })
+        viewModel.showScreen(Screen.Spotify)
+    }
+    val openPlaylist: (String) -> Unit = { url ->
+        val spotifyIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).setPackage(SPOTIFY_PACKAGE_NAME)
+        try {
+            context.startActivity(spotifyIntent)
+        } catch (_: ActivityNotFoundException) {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        }
+    }
+    val openSignInPage: (String) -> Unit = { url -> CustomTabsIntent.Builder().build().launchUrl(context, Uri.parse(url)) }
+    val spotifyActions = SpotifyActions(
+        onBack = { viewModel.showScreen(Screen.Home) },
+        onSignIn = { spotifyViewModel.signIn(openSignInPage) },
+        onSignOut = spotifyViewModel::signOut,
+        onClientIdChange = spotifyViewModel::setClientIdOverride,
+        onChooseSource = spotifyViewModel::chooseSource,
+        onTopCountChange = spotifyViewModel::setTopCount,
+        onPlaylistNameChange = spotifyViewModel::setPlaylistName,
+        onSend = spotifyViewModel::send,
+        onConfirmUnsure = spotifyViewModel::confirmUnsure,
+        onSkipUnsure = spotifyViewModel::skipUnsure,
+        onOpenPlaylist = openPlaylist,
+        onToggleOffered = spotifyViewModel::toggleOffered,
+        onSelectAllOffered = spotifyViewModel::selectAllOffered,
+        onMoveToTrash = { selectedSongs -> moveToTrash(selectedSongs.map { it.track.id }.toSet(), selectedSongs.map { it.track }) },
+        onBackToSetup = spotifyViewModel::backToSetup,
+    )
 
     val fileAccessLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
         viewModel.setFileAccess(isGranted)
@@ -169,7 +210,7 @@ fun PlaySiftApp(viewModel: LibraryViewModel) {
         }
     }
 
-    BackHandler(enabled = state.screen == Screen.Large) { viewModel.showScreen(Screen.Home) }
+    BackHandler(enabled = state.screen == Screen.Large || state.screen == Screen.Spotify) { viewModel.showScreen(Screen.Home) }
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         viewModel.onResume()
@@ -215,6 +256,7 @@ fun PlaySiftApp(viewModel: LibraryViewModel) {
     ) { contentPadding ->
         Box(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
             when {
+                state.screen == Screen.Spotify -> SpotifyScreen(spotifyState, isPreparingTrash, spotifyActions)
                 state.isLoading -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
                 state.loadFailed -> LoadFailedScreen(onTryAgain = viewModel::refresh)
                 state.access != AccessState.Ready -> AccessScreen(
@@ -235,12 +277,14 @@ fun PlaySiftApp(viewModel: LibraryViewModel) {
                     },
                     onImportHistory = pickHistoryFile,
                     onDismissImportOffer = viewModel::dismissImportOffer,
+                    onOpenSpotify = { viewModel.showScreen(Screen.Spotify) },
                 )
                 state.screen == Screen.Settings -> SettingsScreen(
                     selected = state.cutoff,
                     onSelect = viewModel::setCutoff,
                     onExportHistory = viewModel::exportHistory,
                     onImportHistory = pickHistoryFile,
+                    onOpenSpotify = { viewModel.showScreen(Screen.Spotify) },
                 )
                 state.screen == Screen.Large -> LargeSongsScreen(
                     state = state,
@@ -249,6 +293,7 @@ fun PlaySiftApp(viewModel: LibraryViewModel) {
                     onSelectAll = viewModel::selectAll,
                     isPreparingTrash = isPreparingTrash,
                     onMoveToTrash = moveSelectionToTrash,
+                    onSendToSpotify = sendSelectionToSpotify,
                 )
                 else -> TrackListScreen(
                     state = state,
@@ -257,6 +302,7 @@ fun PlaySiftApp(viewModel: LibraryViewModel) {
                     onSelectAll = viewModel::selectAll,
                     isPreparingTrash = isPreparingTrash,
                     onMoveToTrash = moveSelectionToTrash,
+                    onSendToSpotify = sendSelectionToSpotify,
                 )
             }
         }

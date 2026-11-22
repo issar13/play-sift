@@ -34,6 +34,7 @@ fun LargeSongsScreen(
     onSelectAll: () -> Unit,
     onMoveToTrash: () -> Unit,
     isPreparingTrash: Boolean = false,
+    onSendToSpotify: () -> Unit = {},
 ) {
     val selectedSizeBytes = state.selectedIds.sumOf { selectedId -> state.sizesById[selectedId] ?: 0L }
     Column(modifier = Modifier.fillMaxSize()) {
@@ -61,6 +62,7 @@ fun LargeSongsScreen(
                 )
             }
         }
+        SendToSpotifyButton(selectedCount = state.selectedIds.size, onClick = onSendToSpotify)
         Button(
             onClick = onMoveToTrash,
             enabled = state.selectedIds.isNotEmpty() && !isPreparingTrash,

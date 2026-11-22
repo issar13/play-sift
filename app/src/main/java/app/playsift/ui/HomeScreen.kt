@@ -43,6 +43,7 @@ fun HomeScreen(
     onAllowFileAccess: () -> Unit,
     onImportHistory: () -> Unit = {},
     onDismissImportOffer: () -> Unit = {},
+    onOpenSpotify: () -> Unit = {},
 ) {
     val summary = state.home ?: return
     Column(
@@ -94,6 +95,7 @@ fun HomeScreen(
             )
         }
         Highlights(summary)
+        Button(onClick = onOpenSpotify, modifier = Modifier.fillMaxWidth()) { Text("Send songs to Spotify") }
     }
 }
 
