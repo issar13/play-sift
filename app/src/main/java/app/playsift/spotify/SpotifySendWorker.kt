@@ -26,7 +26,7 @@ class SpotifySendWorker(
     override suspend fun doWork(): Result {
         val request = services.store.request() ?: return Result.failure()
         setForeground(getForegroundInfo())
-        val saved = services.runner.run(request, onProgress = ::reportProgress, onPublishing = ::reportPublishing)
+        val saved = services.runner.run(request, onProgress = ::reportProgress, onPublishing = ::reportPublishing, onRateLimitWait = ::reportRateLimitWait)
         services.store.save(saved)
         services.notifications.showFinished(saved)
         return if (saved.failureMessage == null) Result.success() else Result.failure()
@@ -40,5 +40,10 @@ class SpotifySendWorker(
     private suspend fun reportPublishing() {
         setProgress(workDataOf(PROGRESS_PUBLISHING to true))
         setForeground(services.notifications.foregroundInfo(id, SendWorkState.Publishing))
+    }
+
+    /** The next [reportProgress] puts the "Matching" text back once the wait is over and a song is matched. */
+    private suspend fun reportRateLimitWait(seconds: Long) {
+        setForeground(services.notifications.foregroundInfo(id, SendWorkState.WaitingForSpotify(seconds)))
     }
 }

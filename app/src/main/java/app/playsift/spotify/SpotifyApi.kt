@@ -1,5 +1,10 @@
 package app.playsift.spotify
 
+import android.util.Log
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -30,8 +35,16 @@ data class SpotifyTrack(
 @Serializable
 data class SpotifyPlaylist(val id: String, val url: String)
 
-/** [status] is the HTTP status Spotify answered with. */
-class SpotifyHttpException(val status: Int, message: String) : Exception(message)
+/** [status] is the HTTP status Spotify answered with; [retryAfterSeconds] is its Retry-After for a 429, when it sent one. */
+class SpotifyHttpException(val status: Int, message: String, val retryAfterSeconds: Long? = null) : Exception(message)
+
+/**
+ * Put in the coroutine context by a caller that wants to hear about it when Spotify makes a request wait:
+ * [onWait] gets the seconds the request is about to wait. Calls made without it wait silently.
+ */
+class RateLimitWaitHook(val onWait: suspend (seconds: Long) -> Unit) : AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<RateLimitWaitHook>
+}
 
 /** Spotify allows at most 100 items per playlist request. */
 const val PLAYLIST_BATCH_SIZE = 100
@@ -61,9 +74,20 @@ private const val SEARCH_RESULT_LIMIT = 5
 
 /** How many tracks one search for options asks for. */
 const val OPTION_SEARCH_LIMIT = 8
-private const val MAX_RATE_LIMIT_RETRIES = 5
 private const val DEFAULT_RETRY_SECONDS = 1L
-private const val LONGEST_WAIT_SECONDS = 120L
+private const val REQUEST_GAP_MILLISECONDS = 250L
+private const val LONGEST_WAIT_SECONDS = 600L
+private const val MAX_RATE_LIMIT_RETRIES = 10
+private const val LOG_TAG = "PlaySift"
+
+/** How long and how often a request may wait out a 429 before giving up. */
+private class WaitLimit(val longestWaitSeconds: Long, val maxRetries: Int)
+
+/** For the sending worker, which runs as a foreground service and can wait minutes. */
+private val SENDING_WAIT_LIMIT = WaitLimit(LONGEST_WAIT_SECONDS, MAX_RATE_LIMIT_RETRIES)
+
+/** For picker searches made from the screen, which must not leave the user waiting minutes. */
+private val SCREEN_WAIT_LIMIT = WaitLimit(longestWaitSeconds = 120L, maxRetries = 5)
 
 @Serializable
 private data class SearchResponse(val tracks: TrackPage)
@@ -106,8 +130,10 @@ private class RequestSpec(val method: String, val url: HttpUrl, val body: String
 private class Reply(val status: Int, val retryAfterSeconds: Long?, val body: String)
 
 /**
- * Sends the requests, waiting out a 429 for as long as Spotify's Retry-After says (a few retries)
- * and refreshing the token once after a 401. [pause] is injectable so tests do not wait.
+ * Sends the requests one short gap apart, waiting out a 429 for as long as Spotify's Retry-After says
+ * (up to 10 minutes, 10 times; picker searches only up to 2 minutes, 5 times) and refreshing the token once
+ * after a 401. A caller that put a [RateLimitWaitHook] in its coroutine context is told about each wait.
+ * [pause] is injectable so tests do not wait.
  */
 class OkHttpSpotifyApi(
     private val client: OkHttpClient,
@@ -116,6 +142,7 @@ class OkHttpSpotifyApi(
     private val pause: suspend (Long) -> Unit = { milliseconds -> delay(milliseconds) },
 ) : SpotifyApi {
     private val json = Json { ignoreUnknownKeys = true }
+    private val hasSentARequest = AtomicBoolean(false)
 
     @Volatile
     private var userIdForToken: Pair<String, String>? = null
@@ -123,16 +150,16 @@ class OkHttpSpotifyApi(
     override suspend fun searchTracks(title: String, artist: String): List<SpotifyTrack> =
         search(strictQuery(title, artist), SEARCH_RESULT_LIMIT)
 
-    override suspend fun searchOptions(query: String): List<SpotifyTrack> = search(query, OPTION_SEARCH_LIMIT)
+    override suspend fun searchOptions(query: String): List<SpotifyTrack> = search(query, OPTION_SEARCH_LIMIT, SCREEN_WAIT_LIMIT)
 
-    private suspend fun search(query: String, limit: Int): List<SpotifyTrack> {
+    private suspend fun search(query: String, limit: Int, waitLimit: WaitLimit = SENDING_WAIT_LIMIT): List<SpotifyTrack> {
         val url = baseUrl.newBuilder()
             .addPathSegment("search")
             .addQueryParameter("q", query)
             .addQueryParameter("type", "track")
             .addQueryParameter("limit", limit.toString())
             .build()
-        return json.decodeFromString<SearchResponse>(execute(RequestSpec("GET", url, null))).tracks.items.map { track ->
+        return json.decodeFromString<SearchResponse>(execute(RequestSpec("GET", url, null), waitLimit)).tracks.items.map { track ->
             SpotifyTrack(track.uri, track.name, track.artists.map { it.name }, track.durationMillis, track.album?.name.orEmpty())
         }
     }
@@ -170,27 +197,42 @@ class OkHttpSpotifyApi(
     private fun itemsUrl(playlistId: String) =
         baseUrl.newBuilder().addPathSegment("playlists").addPathSegment(playlistId).addPathSegment("items").build()
 
-    private suspend fun execute(spec: RequestSpec): String =
-        attempt(spec, tokens.current(), rateLimitRetries = 0, hasRefreshedToken = false)
+    private suspend fun execute(spec: RequestSpec, waitLimit: WaitLimit = SENDING_WAIT_LIMIT): String =
+        attempt(spec, waitLimit, tokens.current(), rateLimitRetries = 0, hasRefreshedToken = false)
 
-    private tailrec suspend fun attempt(spec: RequestSpec, token: String, rateLimitRetries: Int, hasRefreshedToken: Boolean): String {
+    private tailrec suspend fun attempt(spec: RequestSpec, waitLimit: WaitLimit, token: String, rateLimitRetries: Int, hasRefreshedToken: Boolean): String {
         val reply = send(spec, token)
         return when {
             reply.status in SUCCESS_STATUSES -> reply.body
             reply.status == STATUS_UNAUTHORIZED && !hasRefreshedToken ->
-                attempt(spec, tokens.refreshedAfterRejecting(token), rateLimitRetries, hasRefreshedToken = true)
-            reply.status == STATUS_TOO_MANY_REQUESTS && canWait(reply, rateLimitRetries) -> {
-                pause((reply.retryAfterSeconds ?: DEFAULT_RETRY_SECONDS) * MILLISECONDS_PER_SECOND)
-                attempt(spec, token, rateLimitRetries + 1, hasRefreshedToken)
+                attempt(spec, waitLimit, tokens.refreshedAfterRejecting(token), rateLimitRetries, hasRefreshedToken = true)
+            reply.status == STATUS_TOO_MANY_REQUESTS && canWait(reply, waitLimit, rateLimitRetries) -> {
+                val waitSeconds = reply.retryAfterSeconds ?: DEFAULT_RETRY_SECONDS
+                coroutineContext[RateLimitWaitHook]?.onWait?.invoke(waitSeconds)
+                pause(waitSeconds * MILLISECONDS_PER_SECOND)
+                attempt(spec, waitLimit, token, rateLimitRetries + 1, hasRefreshedToken)
             }
-            else -> throw SpotifyHttpException(reply.status, "Spotify answered ${reply.status} for ${spec.method} ${spec.url.encodedPath}")
+            else -> throw SpotifyHttpException(
+                reply.status,
+                "Spotify answered ${reply.status} for ${spec.method} ${spec.url.encodedPath}",
+                reply.retryAfterSeconds,
+            )
         }
     }
 
-    private fun canWait(reply: Reply, rateLimitRetries: Int) =
-        rateLimitRetries < MAX_RATE_LIMIT_RETRIES && (reply.retryAfterSeconds ?: DEFAULT_RETRY_SECONDS) <= LONGEST_WAIT_SECONDS
+    private fun canWait(reply: Reply, waitLimit: WaitLimit, rateLimitRetries: Int) =
+        rateLimitRetries < waitLimit.maxRetries && (reply.retryAfterSeconds ?: DEFAULT_RETRY_SECONDS) <= waitLimit.longestWaitSeconds
 
-    private suspend fun send(spec: RequestSpec, token: String): Reply =
+    private suspend fun send(spec: RequestSpec, token: String): Reply {
+        if (hasSentARequest.getAndSet(true)) pause(REQUEST_GAP_MILLISECONDS)
+        return sendNow(spec, token).also { reply ->
+            if (reply.status == STATUS_TOO_MANY_REQUESTS) {
+                Log.w(LOG_TAG, "Spotify answered 429 for ${spec.method} ${spec.url.encodedPath}, Retry-After ${reply.retryAfterSeconds ?: "missing"}")
+            }
+        }
+    }
+
+    private suspend fun sendNow(spec: RequestSpec, token: String): Reply =
         withContext(Dispatchers.IO) {
             val request = Request.Builder()
                 .url(spec.url)

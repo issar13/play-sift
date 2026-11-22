@@ -50,6 +50,7 @@ android {
     testOptions {
         unitTests {
             isIncludeAndroidResources = true
+            isReturnDefaultValues = true
             all { test -> test.jvmArgs("--add-exports=java.base/jdk.internal.access=ALL-UNNAMED") }
         }
     }

@@ -65,6 +65,7 @@ class SendNotifications(private val context: Context) {
         when (state) {
             is SendWorkState.Matching ->
                 if (state.total == 0) "Reading your songs" else "Matching ${numbers.format(state.done)} of ${numbers.format(state.total)}"
+            is SendWorkState.WaitingForSpotify -> "Spotify asked Play Sift to wait. Carrying on in about ${minutesToWait(state.seconds)} min."
             else -> "Making the playlist"
         }
 
