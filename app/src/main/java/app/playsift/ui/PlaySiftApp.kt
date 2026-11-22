@@ -100,7 +100,8 @@ fun PlaySiftApp(viewModel: LibraryViewModel, spotifyViewModel: SpotifyViewModel)
     val trashFlow by viewModel.trashFlow.collectAsState()
 
     val trashLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
-        viewModel.onBatchResult(resultOk = result.resultCode == Activity.RESULT_OK)
+        val movedIds = viewModel.onBatchResult(resultOk = result.resultCode == Activity.RESULT_OK)
+        if (viewModel.isTrashingSpotifyResult) spotifyViewModel.songsMovedToTrash(movedIds)
     }
     LaunchedEffect(trashFlow) {
         viewModel.takeBatchToLaunch()?.let { batch ->
@@ -286,7 +287,7 @@ fun PlaySiftApp(viewModel: LibraryViewModel, spotifyViewModel: SpotifyViewModel)
             movedCount = done.movedCount,
             attemptedCount = done.attemptedCount,
             onOpenPlayer = viewModel::openPlayer,
-            onFinished = { spotifyViewModel.songsMovedToTrash(viewModel.finishTrash()) },
+            onFinished = viewModel::finishTrash,
         )
         return
     }

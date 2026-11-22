@@ -234,12 +234,11 @@ class LibraryViewModel(
     suspend fun prepareTrashForRemembered(selectedIds: Set<Long>): TrashPlan? =
         prepareTrash(selectedIds, rememberedTrashCandidates ?: mutableState.value.tracks)
 
-    /** Ids of the songs whose batch Android moved to the trash in the flow that is running. */
-    private var movedTrackIds = emptySet<Long>()
+    /** True while the trash flow was started from the Spotify result rather than an open list. */
+    val isTrashingSpotifyResult: Boolean get() = rememberedTrashCandidates != null
 
     fun confirmTrash() {
         val confirming = mutableTrashFlow.value as? TrashFlow.Confirming ?: return
-        movedTrackIds = emptySet()
         advanceTrash(confirming.plan.batches, movedCount = 0, attemptedCount = confirming.plan.removable.size)
     }
 
@@ -255,14 +254,13 @@ class LibraryViewModel(
         return inProgress.currentBatch
     }
 
-    fun onBatchResult(resultOk: Boolean) {
-        val inProgress = mutableTrashFlow.value as? TrashFlow.InProgress ?: return
+    /** Returns the ids of the songs this batch moved to the trash, so the Spotify result can stop offering them at once. */
+    fun onBatchResult(resultOk: Boolean): Set<Long> {
+        val inProgress = mutableTrashFlow.value as? TrashFlow.InProgress ?: return emptySet()
         val movedCount = inProgress.movedCount + if (resultOk) inProgress.currentBatch.size else 0
-        if (resultOk) {
-            markTrashedInHistory(inProgress.currentBatch)
-            movedTrackIds = movedTrackIds + inProgress.currentBatch.map { it.track.id }
-        }
+        if (resultOk) markTrashedInHistory(inProgress.currentBatch)
         advanceTrash(inProgress.remainingBatches, movedCount, inProgress.attemptedCount)
+        return if (resultOk) inProgress.currentBatch.map { it.track.id }.toSet() else emptySet()
     }
 
     /** A nicety for later relinking: a failure to mark never affects the trash that already happened. */
@@ -278,12 +276,10 @@ class LibraryViewModel(
         }
     }
 
-    /** Returns the ids of the songs that were moved, so the Spotify result can stop offering them. */
-    fun finishTrash(): Set<Long> {
-        if (mutableTrashFlow.value !is TrashFlow.Done) return emptySet()
+    fun finishTrash() {
+        if (mutableTrashFlow.value !is TrashFlow.Done) return
         mutableTrashFlow.value = TrashFlow.Idle
         refresh()
-        return movedTrackIds
     }
 
     private fun advanceTrash(batches: List<List<TrackFile.Removable>>, movedCount: Int, attemptedCount: Int) {

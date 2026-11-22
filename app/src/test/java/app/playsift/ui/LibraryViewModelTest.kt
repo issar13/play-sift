@@ -290,6 +290,28 @@ class LibraryViewModelTest {
     }
 
     @Test
+    fun eachBatchResultReturnsTheIdsItMoved() = runTest(dispatcher) {
+        val viewModel = viewModel(library = FakeLibrary((1L..1000L).map(::track)))
+        confirmedFlow(viewModel, 1000)
+        viewModel.confirmTrash()
+
+        assertEquals((1L..500L).toSet(), viewModel.onBatchResult(resultOk = true))
+        assertEquals(emptySet<Long>(), viewModel.onBatchResult(resultOk = false))
+    }
+
+    @Test
+    fun trashingIsFromTheSpotifyResultOnlyWhenCandidatesWereRemembered() = runTest(dispatcher) {
+        val viewModel = viewModel()
+        assertEquals(false, viewModel.isTrashingSpotifyResult)
+
+        viewModel.rememberTrashCandidates(listOf(track(1)))
+        assertEquals(true, viewModel.isTrashingSpotifyResult)
+
+        viewModel.rememberTrashCandidates(null)
+        assertEquals(false, viewModel.isTrashingSpotifyResult)
+    }
+
+    @Test
     fun onlyTheSongsOfAMovedBatchAreMarkedTrashedInHistory() = runTest(dispatcher) {
         val history = FakePlayHistory()
         val viewModel = viewModel(library = FakeLibrary((1L..1000L).map(::track)), history = history)
