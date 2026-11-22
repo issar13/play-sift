@@ -135,12 +135,12 @@ class SongMatcher(private val api: SpotifyApi, private val dao: SpotifyDao, priv
 class PlaylistPublisher(private val api: SpotifyApi, private val dao: SpotifyDao) {
     /**
      * Fills the playlist remembered for [source] and [name] (or a new one) with [uris], first batch replacing the old items
-     * and the rest appended, 100 at a time. A remembered playlist that was deleted on Spotify is replaced by a new one.
+     * and the rest appended, 100 at a time. A remembered playlist the user deleted or unfollowed on Spotify is replaced by a new one.
      */
     suspend fun publish(source: SendSource, name: String, uris: List<String>): SpotifyPlaylist {
         val playlistKey = source.playlistKey(name)
         val accountId = accountIdForPlaylists()
-        val remembered = dao.playlistFor(accountId, playlistKey)
+        val remembered = dao.playlistFor(accountId, playlistKey)?.takeIf { api.followsPlaylist(it.playlistId) }
         val playlist = remembered?.let { SpotifyPlaylist(it.playlistId, it.url) }
         val reused = playlist?.let { tryFill(it, uris) }
         if (reused != null) return reused

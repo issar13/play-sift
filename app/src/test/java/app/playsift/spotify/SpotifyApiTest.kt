@@ -210,6 +210,28 @@ class SpotifyApiTest {
     }
 
     @Test
+    fun followsPlaylistPagesThroughTheUsersPlaylists() = runTest {
+        val secondPage = server.url("/v1/me/playlists?limit=50&offset=50")
+        server.enqueue(reply(200, """{"items":[{"id":"a"},{"id":"b"}],"next":"$secondPage"}"""))
+        server.enqueue(reply(200, """{"items":[{"id":"wanted"}],"next":null}"""))
+
+        assertEquals(true, api.followsPlaylist("wanted"))
+
+        val firstRequest = server.takeRequest()
+        assertEquals("/v1/me/playlists", firstRequest.url.encodedPath)
+        assertEquals("50", firstRequest.url.queryParameter("limit"))
+        assertEquals("50", server.takeRequest().url.queryParameter("offset"))
+    }
+
+    @Test
+    fun followsPlaylistIsFalseWhenNoPageHoldsIt() = runTest {
+        server.enqueue(reply(200, """{"items":[{"id":"a"}],"next":null}"""))
+
+        assertEquals(false, api.followsPlaylist("wanted"))
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
     fun otherErrorsCarryTheStatus() = runTest {
         server.enqueue(reply(404))
 

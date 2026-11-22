@@ -267,6 +267,19 @@ class SpotifyTransferTest {
     }
 
     @Test
+    fun aPlaylistTheUserUnfollowedIsReplacedByANewOne() = runTest {
+        val publisher = PlaylistPublisher(api, dao)
+        val first = publisher.publish(SendSource.TickedSongs, "Picks", listOf("spotify:track:a"))
+        api.unfollowedPlaylistIds = setOf(first.id)
+
+        val second = publisher.publish(SendSource.TickedSongs, "Picks", listOf("spotify:track:a"))
+
+        assertEquals(2, api.createdNames.size)
+        assertEquals(1, api.replaceCalls.count { (playlistId, _) -> playlistId == first.id })
+        assertEquals(second.id, dao.playlists.getValue("test-user" to "ticked:picks").playlistId)
+    }
+
+    @Test
     fun trashOfferHoldsOnlySongsMatchedAutomaticallyAndAdded() {
         val automatic = MatchedSong(songTrack(1), "spotify:track:1", wasConfirmedByUser = false)
         val confirmed = MatchedSong(songTrack(2), "spotify:track:2", wasConfirmedByUser = true)
