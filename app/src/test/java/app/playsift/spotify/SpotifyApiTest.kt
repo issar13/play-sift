@@ -11,6 +11,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
 
@@ -128,6 +129,16 @@ class SpotifyApiTest {
         server.enqueue(reply(429, retryAfter = "300"))
 
         val failure = failureOf<SpotifyHttpException> { api.searchOptions("Halo") }
+
+        assertEquals(300L, failure.retryAfterSeconds)
+        assertEquals(emptyList<Long>(), pauses)
+    }
+
+    @Test
+    fun theProfileNameUsesTheShortCap() = runTest {
+        server.enqueue(reply(429, retryAfter = "300"))
+
+        val failure = failureOf<SpotifyHttpException> { api.currentUserName() }
 
         assertEquals(300L, failure.retryAfterSeconds)
         assertEquals(emptyList<Long>(), pauses)
@@ -285,6 +296,26 @@ class SpotifyAccountsTest {
     }
 
     @Test
+    fun aRefusedRefreshKeepsTheOAuthErrorCode() = runTest {
+        server.enqueue(MockResponse.Builder().code(400).body("""{"error":"invalid_client","error_description":"x"}""").build())
+
+        val failure = failureOf<SpotifyAuthException> { accounts().refresh("c", "old-refresh") }
+
+        assertEquals(400, failure.status)
+        assertEquals("invalid_client", failure.error)
+    }
+
+    @Test
+    fun aRefusalThatIsNotJsonHasNoErrorCode() = runTest {
+        server.enqueue(MockResponse.Builder().code(502).body("<html>bad gateway</html>").build())
+
+        val failure = failureOf<SpotifyAuthException> { accounts().refresh("c", "old-refresh") }
+
+        assertEquals(502, failure.status)
+        assertNull(failure.error)
+    }
+
+    @Test
     fun authorizationUrlCarriesTheChallengeScopesAndRedirect() {
         val url = authorizationUrl("client-1", "challenge-1", "state-1").toHttpUrl()
 
@@ -297,5 +328,10 @@ class SpotifyAccountsTest {
         assertEquals("state-1", url.queryParameter("state"))
         assertEquals("playsift://spotify-callback", url.queryParameter("redirect_uri"))
         assertEquals(SPOTIFY_SCOPES, url.queryParameter("scope"))
+    }
+
+    @Test
+    fun theScopesIncludeCollaborativePlaylists() {
+        assertEquals(true, SPOTIFY_SCOPES.split(" ").contains("playlist-read-collaborative"))
     }
 }

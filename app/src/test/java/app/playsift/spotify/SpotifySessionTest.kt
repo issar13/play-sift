@@ -47,6 +47,7 @@ class InMemoryTokenStore(var stored: SpotifyTokens? = null, var pending: Pending
 
 class FakeAccounts : SpotifyAccounts {
     var refreshCount = 0
+    var refreshedWithClientId: String? = null
     /** When set, a refresh waits here after it started, like a slow network call. */
     var refreshGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
     var exchangedWith: Triple<String, String, String>? = null
@@ -61,6 +62,7 @@ class FakeAccounts : SpotifyAccounts {
 
     override suspend fun refresh(clientId: String, refreshToken: String): SpotifyTokens {
         refreshCount += 1
+        refreshedWithClientId = clientId
         refreshGate?.await()
         refreshFailure?.let { throw it }
         return SpotifyTokens("access-refreshed-$refreshCount", refreshToken, Instant.parse("2026-11-22T02:00:00Z"))
@@ -124,12 +126,50 @@ class SpotifySessionTest {
     @Test
     fun aRefreshTokenSpotifyRefusesSignsTheUserOut() = runTest {
         val store = InMemoryTokenStore(SpotifyTokens("rejected", "refresh", Instant.parse("2026-11-22T01:00:00Z")))
-        accounts.refreshFailure = SpotifyAuthException("invalid_grant", status = 400)
+        accounts.refreshFailure = SpotifyAuthException("sign-in failed", status = 400, error = "invalid_grant")
 
         failureOf<SpotifyAuthException> { session(store).refreshedAfterRejecting("rejected") }
 
         assertNull(store.stored)
         assertEquals(false, session(store).isSignedIn())
+    }
+
+    @Test
+    fun aRefreshRefusedForAnotherOAuthErrorKeepsTheTokens() = runTest {
+        val store = InMemoryTokenStore(SpotifyTokens("rejected", "refresh", Instant.parse("2026-11-22T01:00:00Z")))
+        accounts.refreshFailure = SpotifyAuthException("sign-in failed", status = 400, error = "invalid_client")
+
+        failureOf<SpotifyAuthException> { session(store).refreshedAfterRejecting("rejected") }
+
+        assertEquals("rejected", store.stored!!.accessToken)
+    }
+
+    @Test
+    fun aRefreshUsesTheClientIdThatIssuedTheTokens() = runTest {
+        val store = InMemoryTokenStore(SpotifyTokens("rejected", "refresh", Instant.parse("2026-11-22T01:00:00Z"), clientId = "issuing-client"))
+
+        session(store).refreshedAfterRejecting("rejected")
+
+        assertEquals("issuing-client", accounts.refreshedWithClientId)
+        assertEquals("issuing-client", store.stored!!.clientId)
+    }
+
+    @Test
+    fun tokensSavedBeforeTheClientIdWasStoredRefreshWithTheCurrentClientId() = runTest {
+        val store = InMemoryTokenStore(SpotifyTokens("rejected", "refresh", Instant.parse("2026-11-22T01:00:00Z")))
+
+        session(store).refreshedAfterRejecting("rejected")
+
+        assertEquals("client-1", accounts.refreshedWithClientId)
+    }
+
+    @Test
+    fun signingInStoresTheClientIdTheTokensWereIssuedTo() = runTest {
+        val store = InMemoryTokenStore()
+
+        session(store).completeSignIn("the-code", "the-verifier", signInClientId = "client-at-sign-in")
+
+        assertEquals("client-at-sign-in", store.stored!!.clientId)
     }
 
     @Test
@@ -211,6 +251,24 @@ class DataStoreTokenStoreTest {
         assertEquals(tokens, store.tokens())
         val fileText = folder.root.listFiles()!!.joinToString { it.readText(Charsets.ISO_8859_1) }
         assertEquals(false, fileText.contains("secret-access"))
+    }
+
+    @Test
+    fun tokensKeepTheClientIdThatIssuedThem() = runTest {
+        val store = store()
+
+        store.saveTokens(SpotifyTokens("a", "r", Instant.parse("2026-11-22T01:00:00Z"), clientId = "client-1"))
+
+        assertEquals("client-1", store.tokens()!!.clientId)
+    }
+
+    @Test
+    fun tokensSavedBeforeTheClientIdWasStoredStillRead() = runTest {
+        val dataStore = PreferenceDataStoreFactory.create(scope = scope) { File(folder.root, "store.preferences_pb") }
+        val oldJson = """{"accessToken":"a","refreshToken":"r","expiresAtEpochMillis":1}"""
+        dataStore.edit { it[androidx.datastore.preferences.core.stringPreferencesKey("spotify_tokens")] = cipher.encrypt(oldJson) }
+
+        assertNull(DataStoreTokenStore(dataStore, cipher).tokens()!!.clientId)
     }
 
     @Test

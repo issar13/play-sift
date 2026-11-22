@@ -175,7 +175,7 @@ class OkHttpSpotifyApi(
     }
 
     override suspend fun currentUserName(): String {
-        val user = currentUser()
+        val user = json.decodeFromString<UserDto>(execute(userRequest(), SCREEN_WAIT_LIMIT))
         return user.displayName ?: user.id
     }
 
@@ -187,7 +187,9 @@ class OkHttpSpotifyApi(
     }
 
     private suspend fun currentUser(): UserDto =
-        json.decodeFromString<UserDto>(execute(RequestSpec("GET", baseUrl.newBuilder().addPathSegment("me").build(), null)))
+        json.decodeFromString<UserDto>(execute(userRequest()))
+
+    private fun userRequest() = RequestSpec("GET", baseUrl.newBuilder().addPathSegment("me").build(), null)
 
     override suspend fun followsPlaylist(playlistId: String): Boolean {
         val firstPage = baseUrl.newBuilder()

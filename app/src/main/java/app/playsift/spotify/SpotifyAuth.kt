@@ -9,6 +9,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import okhttp3.FormBody
 import okhttp3.HttpUrl
@@ -17,7 +18,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 
 const val SPOTIFY_REDIRECT_URI = "playsift://spotify-callback"
-const val SPOTIFY_SCOPES = "playlist-modify-private playlist-modify-public playlist-read-private"
+const val SPOTIFY_SCOPES = "playlist-modify-private playlist-modify-public playlist-read-private playlist-read-collaborative"
 
 private val ACCOUNTS_URL = "https://accounts.spotify.com/".toHttpUrl()
 
@@ -27,10 +28,11 @@ private val ACCOUNTS_URL = "https://accounts.spotify.com/".toHttpUrl()
  */
 data class PendingAuthorization(val verifier: String, val state: String, val clientId: String? = null)
 
-data class SpotifyTokens(val accessToken: String, val refreshToken: String, val expiresAt: Instant)
+/** [clientId] is the Client ID that issued the tokens, which a refresh must use; it is null in tokens saved before it was stored. */
+data class SpotifyTokens(val accessToken: String, val refreshToken: String, val expiresAt: Instant, val clientId: String? = null)
 
-/** [status] is the token endpoint's HTTP status. */
-class SpotifyAuthException(message: String, val status: Int? = null) : Exception(message)
+/** [status] is the token endpoint's HTTP status and [error] its OAuth `error` code, such as `invalid_grant`, when it sent one. */
+class SpotifyAuthException(message: String, val status: Int? = null, val error: String? = null) : Exception(message)
 
 fun authorizationUrl(clientId: String, challenge: String, state: String, baseUrl: HttpUrl = ACCOUNTS_URL): String =
     baseUrl.newBuilder()
@@ -57,6 +59,9 @@ private data class TokenResponse(
     @SerialName("refresh_token") val refreshToken: String? = null,
     @SerialName("expires_in") val expiresInSeconds: Long,
 )
+
+@Serializable
+private data class TokenErrorResponse(val error: String? = null)
 
 class OkHttpSpotifyAccounts(
     private val client: OkHttpClient,
@@ -87,12 +92,22 @@ class OkHttpSpotifyAccounts(
             previousRefreshToken = refreshToken,
         )
 
+    /** The error body is not guaranteed to be JSON, so anything unreadable counts as no error code. */
+    private fun errorCodeOf(responseBody: String): String? =
+        try {
+            json.decodeFromString<TokenErrorResponse>(responseBody).error
+        } catch (_: SerializationException) {
+            null
+        }
+
     /** A refresh response may omit a new refresh token, in which case the old one stays valid. */
     private suspend fun requestTokens(body: FormBody, previousRefreshToken: String?): SpotifyTokens =
         withContext(Dispatchers.IO) {
             val request = Request.Builder().url(baseUrl.newBuilder().addPathSegments("api/token").build()).post(body).build()
             client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) throw SpotifyAuthException("Spotify sign-in failed with status ${response.code}", response.code)
+                if (!response.isSuccessful) {
+                    throw SpotifyAuthException("Spotify sign-in failed with status ${response.code}", response.code, errorCodeOf(response.body.string()))
+                }
                 val tokenResponse = json.decodeFromString<TokenResponse>(response.body.string())
                 SpotifyTokens(
                     accessToken = tokenResponse.accessToken,
@@ -138,8 +153,9 @@ class SpotifySession(
 
     /** Saves under [refreshLock], so a refresh that started earlier cannot overwrite the new sign-in afterwards. */
     suspend fun completeSignIn(code: String, verifier: String, signInClientId: String? = null) {
-        val tokens = accounts.exchangeCode(signInClientId ?: clientId(), code, verifier)
-        refreshLock.withLock { store.saveTokens(tokens) }
+        val issuingClientId = signInClientId ?: clientId()
+        val tokens = accounts.exchangeCode(issuingClientId, code, verifier)
+        refreshLock.withLock { store.saveTokens(tokens.copy(clientId = issuingClientId)) }
     }
 
     /** Waits for an in-flight refresh, so the refresh cannot store credentials after the sign-out. */
@@ -163,17 +179,23 @@ class SpotifySession(
             }
         }
 
-    /** Spotify answering 400 or 401 means the refresh token is revoked or expired: the tokens are cleared so the user signs in again. */
-    private suspend fun refreshedTokens(stored: SpotifyTokens): SpotifyTokens =
-        try {
-            accounts.refresh(clientId(), stored.refreshToken)
+    /**
+     * Refreshes with the Client ID that issued the tokens, falling back to the current one for tokens saved before it was stored.
+     * Spotify answering `invalid_grant` means the refresh token is revoked or expired: the tokens are cleared so the user signs in again.
+     * Any other refusal keeps them.
+     */
+    private suspend fun refreshedTokens(stored: SpotifyTokens): SpotifyTokens {
+        val issuingClientId = stored.clientId ?: clientId()
+        return try {
+            accounts.refresh(issuingClientId, stored.refreshToken).copy(clientId = issuingClientId)
         } catch (exception: SpotifyAuthException) {
-            if (exception.status in REFUSED_REFRESH_STATUSES) store.clear()
+            if (exception.error == INVALID_GRANT) store.clear()
             throw exception
         }
+    }
 
     private companion object {
         val EXPIRY_MARGIN: Duration = Duration.ofSeconds(60)
-        val REFUSED_REFRESH_STATUSES = listOf(400, 401)
+        const val INVALID_GRANT = "invalid_grant"
     }
 }

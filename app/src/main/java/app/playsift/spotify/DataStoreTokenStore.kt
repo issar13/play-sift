@@ -12,7 +12,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 @Serializable
-private data class StoredTokens(val accessToken: String, val refreshToken: String, val expiresAtEpochMillis: Long)
+private data class StoredTokens(val accessToken: String, val refreshToken: String, val expiresAtEpochMillis: Long, val clientId: String? = null)
 
 @Serializable
 private data class StoredPending(val verifier: String, val state: String, val clientId: String? = null)
@@ -25,12 +25,12 @@ class DataStoreTokenStore(
     override suspend fun tokens(): SpotifyTokens? =
         readDecrypted(TOKENS_KEY)?.let { text ->
             Json.decodeFromString<StoredTokens>(text).let { stored ->
-                SpotifyTokens(stored.accessToken, stored.refreshToken, Instant.ofEpochMilli(stored.expiresAtEpochMillis))
+                SpotifyTokens(stored.accessToken, stored.refreshToken, Instant.ofEpochMilli(stored.expiresAtEpochMillis), stored.clientId)
             }
         }
 
     override suspend fun saveTokens(tokens: SpotifyTokens) =
-        writeEncrypted(TOKENS_KEY, Json.encodeToString(StoredTokens(tokens.accessToken, tokens.refreshToken, tokens.expiresAt.toEpochMilli())))
+        writeEncrypted(TOKENS_KEY, Json.encodeToString(StoredTokens(tokens.accessToken, tokens.refreshToken, tokens.expiresAt.toEpochMilli(), tokens.clientId)))
 
     override suspend fun pendingAuthorization(): PendingAuthorization? =
         readDecrypted(PENDING_KEY)?.let { text ->
