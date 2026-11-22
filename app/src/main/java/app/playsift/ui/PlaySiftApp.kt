@@ -229,6 +229,7 @@ fun PlaySiftApp(viewModel: LibraryViewModel, spotifyViewModel: SpotifyViewModel)
         onSignOut = spotifyViewModel::signOut,
         onClientIdChange = spotifyViewModel::setClientIdOverride,
         onChooseSource = spotifyViewModel::chooseSource,
+        onChoosePlayerPlaylist = spotifyViewModel::choosePlayerPlaylist,
         onTopCountTextChange = spotifyViewModel::setTopCountText,
         onUseAllPlayedCount = spotifyViewModel::useAllPlayedCount,
         onPlaylistNameChange = spotifyViewModel::setPlaylistName,

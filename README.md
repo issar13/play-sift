@@ -34,7 +34,8 @@ Music players lose their play counts when their library is rebuilt (new phone, r
 Open **Send songs to Spotify** from Home or Settings. Play Sift makes a private Spotify playlist from:
 
 - your **top played** songs (the top 100 by default, using total plays),
-- **everything you have played**, or
+- **everything you have played**,
+- **one of your music player's playlists** (pick it on the Spotify screen; the Spotify playlist gets the same name and the songs keep their order), or
 - **songs you tick** in any list (use **Send to Spotify** under the list).
 
 Songs are matched on Spotify by title, artist and length (within 5 seconds). Close matches are shown to you to confirm or skip, and songs that are not on Spotify are counted but left alone. Matches are remembered, so a second run is fast. Running the same source again updates its playlist instead of making a new one.

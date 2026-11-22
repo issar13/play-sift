@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import app.playsift.files.FileLocation
 import app.playsift.files.FileSizes
 import app.playsift.files.fileLocation
+import app.playsift.player.PlayerPlaylists
 import app.playsift.player.PlayerTrack
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.combine
@@ -23,6 +24,7 @@ class SpotifyViewModel(
     private val api: SpotifyApi,
     private val matcher: SongMatcher,
     private val publisher: PlaylistPublisher,
+    private val playerPlaylists: PlayerPlaylists,
     private val fileSizes: FileSizes,
     private val store: SendStore,
     private val scheduler: SendScheduler,
@@ -113,8 +115,39 @@ class SpotifyViewModel(
     }
 
     fun chooseSource(choice: SourceChoice) {
-        mutableState.update { it.copy(choice = choice, playlistName = sourceFor(choice, it.topCount ?: DEFAULT_TOP_COUNT).defaultName) }
+        mutableState.update {
+            val chosen = it.copy(choice = choice)
+            chosen.copy(playlistName = chosen.source?.defaultName.orEmpty())
+        }
+        if (choice == SourceChoice.PlayerPlaylist) loadPlayerPlaylists()
         refreshPlaylistHint()
+    }
+
+    /** Picks one of the loaded player playlists. Its name fills the name field unless the user typed a different name. */
+    fun choosePlayerPlaylist(playlistId: Long) {
+        mutableState.update { current ->
+            val picked = current.playerPlaylists.firstOrNull { it.id == playlistId } ?: return@update current
+            val hasTypedName = current.playlistName.isNotBlank() && current.playlistName != current.selectedPlayerPlaylist?.name
+            current.copy(
+                selectedPlayerPlaylistId = picked.id,
+                playlistName = if (hasTypedName) current.playlistName else picked.name,
+            )
+        }
+        refreshPlaylistHint()
+    }
+
+    private fun loadPlayerPlaylists() {
+        mutableState.update { it.copy(isLoadingPlayerPlaylists = true, playerPlaylistsError = null) }
+        viewModelScope.launch {
+            try {
+                val loaded = playerPlaylists.playlists()
+                mutableState.update { it.copy(playerPlaylists = loaded, isLoadingPlayerPlaylists = false) }
+            } catch (exception: CancellationException) {
+                throw exception
+            } catch (_: Exception) {
+                mutableState.update { it.copy(isLoadingPlayerPlaylists = false, playerPlaylistsError = PLAYER_PLAYLISTS_FAILED_MESSAGE) }
+            }
+        }
     }
 
     fun setTopCountText(input: String) {
@@ -153,8 +186,8 @@ class SpotifyViewModel(
     private fun refreshPlaylistHint() {
         viewModelScope.launch {
             val current = mutableState.value
-            val source = sourceFor(current.choice, current.topCount ?: DEFAULT_TOP_COUNT)
-            val willUpdate = hasPlaylistOrFalse(source, source.nameFor(current.playlistName))
+            val source = current.source
+            val willUpdate = source != null && hasPlaylistOrFalse(source, source.nameFor(current.playlistName))
             mutableState.update { it.copy(willUpdatePlaylist = willUpdate) }
         }
     }
@@ -190,6 +223,8 @@ class SpotifyViewModel(
             topCount = current.topCount ?: DEFAULT_TOP_COUNT,
             playlistName = current.playlistName,
             tickedTracks = if (current.choice == SourceChoice.TickedSongs) current.tickedTracks else emptyList(),
+            playerPlaylistId = current.selectedPlayerPlaylistId.takeIf { current.choice == SourceChoice.PlayerPlaylist },
+            playerPlaylistName = current.selectedPlayerPlaylist?.name.takeIf { current.choice == SourceChoice.PlayerPlaylist },
         )
         viewModelScope.launch {
             if (scheduler.start(request) == StartOutcome.AlreadyRunning) showMessage(ALREADY_RUNNING_MESSAGE)
@@ -375,5 +410,7 @@ class SpotifyViewModel(
 }
 
 private const val PLAYED_COUNT_FAILED_MESSAGE = "Couldn't read your play counts. Check that Play Sift can read your music player's library."
+
+private const val PLAYER_PLAYLISTS_FAILED_MESSAGE = "Couldn't read your music player's playlists. Check that Play Sift can read your music player's library."
 
 private const val ALREADY_RUNNING_MESSAGE = "A send to Spotify is already running. Wait for it to finish or cancel it first."

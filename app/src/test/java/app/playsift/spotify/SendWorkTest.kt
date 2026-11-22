@@ -42,7 +42,7 @@ class SendWorkTest {
 
     @Before
     fun setUp() {
-        val services = SendServices(SendRunner(SongMatcher(api, dao, clock), PlaylistPublisher(api, dao)) { emptyList() }, store, SendNotifications(context))
+        val services = SendServices(SendRunner(SongMatcher(api, dao, clock), PlaylistPublisher(api, dao), FakePlayerPlaylists()) { emptyList() }, store, SendNotifications(context))
         val factory = object : WorkerFactory() {
             override fun createWorker(appContext: Context, workerClassName: String, workerParameters: WorkerParameters): ListenableWorker? =
                 SpotifySendWorker(appContext, workerParameters, services).takeIf { workerClassName == SpotifySendWorker::class.java.name }

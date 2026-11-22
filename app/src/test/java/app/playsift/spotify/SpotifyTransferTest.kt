@@ -43,6 +43,23 @@ class SpotifyTransferTest {
     }
 
     @Test
+    fun playerPlaylistKeepsTheEntryOrderDropsDuplicatesAndUnknownIds() {
+        val merged = listOf(songTrack(1, playCount = 0), songTrack(2, playCount = 9), songTrack(3, playCount = 5))
+
+        val songs = tracksFor(SendSource.PlayerPlaylist(7, "Gym"), merged, emptyList(), playlistSongIds = listOf(3L, 99L, 1L, 3L, 2L, 1L))
+
+        assertEquals(listOf(3L, 1L, 2L), songs.map { it.id })
+    }
+
+    @Test
+    fun playerPlaylistSourceIsKeyedByItsNameAndDefaultsToIt() {
+        val source = SendSource.PlayerPlaylist(7, "Gym")
+
+        assertEquals("player:gym", source.playlistKey("Gym"))
+        assertEquals("Gym", source.nameFor(""))
+    }
+
+    @Test
     fun matchingSortsSongsIntoThreeBuckets() = runTest {
         api.catalogue = mapOf(
             "Exact" to listOf(spotifyTrack("Exact")),

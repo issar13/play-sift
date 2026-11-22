@@ -15,8 +15,9 @@ class SendRunnerTest {
     private val clock = Clock.fixed(Instant.parse("2026-11-22T00:00:00Z"), ZoneOffset.UTC)
     private val api = FakeSpotifyApi()
     private val dao = FakeSpotifyDao()
+    private val playerPlaylists = FakePlayerPlaylists()
     private var mergedTrackLoads = 0
-    private val runner = SendRunner(SongMatcher(api, dao, clock), PlaylistPublisher(api, dao)) {
+    private val runner = SendRunner(SongMatcher(api, dao, clock), PlaylistPublisher(api, dao), playerPlaylists) {
         mergedTrackLoads += 1
         listOf(songTrack(1, title = "One", playCount = 30), songTrack(2, title = "Two", playCount = 20), songTrack(3, title = "Three", playCount = 10))
     }
@@ -37,6 +38,21 @@ class SendRunnerTest {
         assertEquals(listOf(1L, 2L), saved.result.added.map { it.track.id })
         assertEquals(listOf(3L), saved.result.notFound.map { it.id })
         assertNull(saved.failureMessage)
+    }
+
+    @Test
+    fun aPlayerPlaylistRequestSendsThePlaylistsSongsInOrder() = runTest {
+        playerPlaylists.songIdsByPlaylist = mapOf(5L to listOf(3L, 1L, 3L, 42L))
+        api.catalogue = mapOf("One" to listOf(spotifyTrack("One")), "Three" to listOf(spotifyTrack("Three")))
+
+        val saved = run(sendRequest(SourceChoice.PlayerPlaylist, playlistName = "", playerPlaylistId = 5, playerPlaylistName = "Gym mix"))
+
+        assertEquals(listOf(3L, 1L), saved.result.added.map { it.track.id })
+        assertEquals(listOf("Gym mix"), api.createdNames)
+        assertEquals(listOf("spotify:track:Three", "spotify:track:One"), api.replaceCalls.single().second)
+        assertEquals(5L, saved.playerPlaylistId)
+        assertEquals("Gym mix", saved.playerPlaylistName)
+        assertEquals(SendSource.PlayerPlaylist(5, "Gym mix"), saved.source)
     }
 
     @Test

@@ -1,5 +1,6 @@
 package app.playsift.spotify
 
+import app.playsift.player.PlayerPlaylists
 import app.playsift.player.PlayerTrack
 import kotlinx.coroutines.CancellationException
 
@@ -12,6 +13,7 @@ const val NONE_MATCHED_MESSAGE = "None of these songs could be matched on Spotif
 class SendRunner(
     private val matcher: SongMatcher,
     private val publisher: PlaylistPublisher,
+    private val playerPlaylists: PlayerPlaylists,
     private val loadMergedTracks: suspend () -> List<PlayerTrack>,
 ) {
     /** A failure becomes a [SavedSend] with a message; a cancellation is passed on so matches found so far stay cached. */
@@ -29,9 +31,10 @@ class SendRunner(
         }
 
     private suspend fun send(request: SendRequest, onProgress: suspend (Int, Int) -> Unit, onPublishing: suspend () -> Unit): SavedSend {
-        val source = sourceFor(request.choice, request.topCount)
+        val source = sourceFor(request.choice, request.topCount, request.playerPlaylistId, request.playerPlaylistName)
         val mergedTracks = if (source == SendSource.TickedSongs) emptyList() else loadMergedTracks()
-        val report = matcher.match(tracksFor(source, mergedTracks, request.tickedTracks), onProgress)
+        val playlistSongIds = if (source is SendSource.PlayerPlaylist) playerPlaylists.songIds(source.playlistId) else emptyList()
+        val report = matcher.match(tracksFor(source, mergedTracks, request.tickedTracks, playlistSongIds), onProgress)
         if (report.matched.isEmpty() && report.unsure.isEmpty() && report.notFound.isEmpty()) return failedSend(request, NONE_MATCHED_MESSAGE)
         val name = source.nameFor(request.playlistName)
         val playlist = report.matched.takeIf { it.isNotEmpty() }?.let { matched ->
@@ -44,6 +47,8 @@ class SendRunner(
             playlistName = name,
             result = SendResult(playlist, report.matched, skippedUnsure = emptyList(), notFound = report.notFound),
             unsure = report.unsure,
+            playerPlaylistId = request.playerPlaylistId,
+            playerPlaylistName = request.playerPlaylistName,
         )
     }
 }
@@ -56,6 +61,8 @@ fun failedSend(request: SendRequest, message: String) =
         result = SendResult(playlist = null, added = emptyList(), skippedUnsure = emptyList(), notFound = emptyList()),
         unsure = emptyList(),
         failureMessage = message,
+        playerPlaylistId = request.playerPlaylistId,
+        playerPlaylistName = request.playerPlaylistName,
     )
 
 private const val STATUS_UNAUTHORIZED = 401

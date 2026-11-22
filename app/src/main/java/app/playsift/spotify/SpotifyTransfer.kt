@@ -21,21 +21,37 @@ sealed class SendSource(val key: String, val defaultName: String) {
     data object EverythingPlayed : SendSource("played", "Play Sift played")
 
     data object TickedSongs : SendSource("ticked", "Play Sift picks")
+
+    data class PlayerPlaylist(val playlistId: Long, val playlistName: String) : SendSource("player", playlistName)
 }
 
-fun sourceFor(choice: SourceChoice, topCount: Int): SendSource =
+/** [playerPlaylistId] and [playerPlaylistName] are only read for [SourceChoice.PlayerPlaylist], where they must be set. */
+fun sourceFor(choice: SourceChoice, topCount: Int, playerPlaylistId: Long? = null, playerPlaylistName: String? = null): SendSource =
     when (choice) {
         SourceChoice.TopPlayed -> SendSource.TopPlayed(topCount)
         SourceChoice.EverythingPlayed -> SendSource.EverythingPlayed
         SourceChoice.TickedSongs -> SendSource.TickedSongs
+        SourceChoice.PlayerPlaylist -> SendSource.PlayerPlaylist(checkNotNull(playerPlaylistId), checkNotNull(playerPlaylistName))
     }
 
-/** Songs a source holds, in play-count order for the played sources. [mergedTracks] carry total plays. */
-fun tracksFor(source: SendSource, mergedTracks: List<PlayerTrack>, tickedTracks: List<PlayerTrack>): List<PlayerTrack> =
+/**
+ * Songs a source holds, in play-count order for the played sources. [mergedTracks] carry total plays.
+ * [playlistSongIds] are the player playlist's entries in order: unknown ids are dropped and a repeated song is kept once.
+ */
+fun tracksFor(
+    source: SendSource,
+    mergedTracks: List<PlayerTrack>,
+    tickedTracks: List<PlayerTrack>,
+    playlistSongIds: List<Long> = emptyList(),
+): List<PlayerTrack> =
     when (source) {
         is SendSource.TopPlayed -> playedByCount(mergedTracks).take(source.count)
         SendSource.EverythingPlayed -> playedByCount(mergedTracks)
         SendSource.TickedSongs -> tickedTracks
+        is SendSource.PlayerPlaylist -> {
+            val tracksById = mergedTracks.associateBy { it.id }
+            playlistSongIds.distinct().mapNotNull(tracksById::get)
+        }
     }
 
 private fun playedByCount(mergedTracks: List<PlayerTrack>) = mergedTracks.filter { it.playCount > 0 }.sortedByDescending { it.playCount }

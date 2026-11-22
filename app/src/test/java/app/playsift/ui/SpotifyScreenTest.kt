@@ -14,6 +14,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
+import app.playsift.player.PlayerPlaylist
 import app.playsift.player.PlayerTrack
 import app.playsift.spotify.SendResult
 import app.playsift.spotify.SourceChoice
@@ -60,7 +61,7 @@ class SpotifyScreenTest {
         onConfirmUnsure: (Long) -> Unit = {},
         onSkipUnsure: (Long) -> Unit = {},
     ) = SpotifyActions(
-        onSignIn = {}, onSignOut = {}, onClientIdChange = {}, onChooseSource = {},
+        onSignIn = {}, onSignOut = {}, onClientIdChange = {}, onChooseSource = {}, onChoosePlayerPlaylist = {},
         onTopCountTextChange = onTopCountTextChange, onUseAllPlayedCount = onUseAllPlayedCount,
         onPlaylistNameChange = {}, onSend = {}, onCancelSend = {}, onConfirmUnsure = onConfirmUnsure, onSkipUnsure = onSkipUnsure,
         onOpenPlaylist = {}, onToggleOffered = {}, onSelectAllOffered = {}, onMoveToTrash = {}, onBackToSetup = {},
@@ -91,6 +92,26 @@ class SpotifyScreenTest {
         composeRule.onNodeWithTag("topCountField").performTextInput("50")
 
         composeRule.onNodeWithText("Send 50 songs to Spotify").assertIsEnabled()
+    }
+
+    @Test
+    fun playerPlaylistsAreListedWithTheirSongCounts() {
+        showSetup(
+            setupState.copy(
+                choice = SourceChoice.PlayerPlaylist,
+                playerPlaylists = listOf(PlayerPlaylist(1, "Gym", 12)),
+            ),
+        )
+
+        composeRule.onNodeWithText("Your player's playlists").assertExists()
+        composeRule.onNodeWithText("Gym \u00B7 12 songs").assertExists()
+    }
+
+    @Test
+    fun anEmptyPlayerPlaylistListSaysSo() {
+        showSetup(setupState.copy(choice = SourceChoice.PlayerPlaylist))
+
+        composeRule.onNodeWithText("No playlists in your music player.").assertExists()
     }
 
     @Test

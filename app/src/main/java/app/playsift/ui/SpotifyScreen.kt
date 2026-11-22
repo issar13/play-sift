@@ -62,6 +62,7 @@ class SpotifyActions(
     val onSignOut: () -> Unit,
     val onClientIdChange: (String) -> Unit,
     val onChooseSource: (SourceChoice) -> Unit,
+    val onChoosePlayerPlaylist: (Long) -> Unit,
     val onTopCountTextChange: (String) -> Unit,
     val onUseAllPlayedCount: () -> Unit,
     val onPlaylistNameChange: (String) -> Unit,
@@ -170,6 +171,8 @@ private fun SetupSection(state: SpotifyUiState, actions: SpotifyActions) {
         isSelected = state.choice == SourceChoice.TickedSongs,
         isEnabled = state.tickedTracks.isNotEmpty(),
     ) { actions.onChooseSource(SourceChoice.TickedSongs) }
+    SourceRadio("Your player's playlists", state.choice == SourceChoice.PlayerPlaylist, true) { actions.onChooseSource(SourceChoice.PlayerPlaylist) }
+    if (state.choice == SourceChoice.PlayerPlaylist) PlayerPlaylistList(state, actions)
     OutlinedTextField(
         value = state.playlistName,
         onValueChange = actions.onPlaylistNameChange,
@@ -206,6 +209,22 @@ private fun TopCountInput(state: SpotifyUiState, actions: SpotifyActions) {
                 )
             }
             FilterChip(selected = false, onClick = actions.onUseAllPlayedCount, label = { Text("All") })
+        }
+    }
+}
+
+@Composable
+private fun PlayerPlaylistList(state: SpotifyUiState, actions: SpotifyActions) {
+    Column(modifier = Modifier.padding(start = 16.dp)) {
+        when {
+            state.isLoadingPlayerPlaylists -> CircularProgressIndicator()
+            state.playerPlaylistsError != null -> Text(state.playerPlaylistsError, color = MaterialTheme.colorScheme.error)
+            state.playerPlaylists.isEmpty() -> Text("No playlists in your music player.", style = MaterialTheme.typography.bodySmall)
+            else -> state.playerPlaylists.forEach { playlist ->
+                SourceRadio("${playlist.name} \u00B7 ${playlist.songCount} songs", state.selectedPlayerPlaylistId == playlist.id, true) {
+                    actions.onChoosePlayerPlaylist(playlist.id)
+                }
+            }
         }
     }
 }

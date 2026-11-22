@@ -65,9 +65,6 @@ class PlayerLibrary(private val contentResolver: ContentResolver) : Library {
             }
             .toMap()
 
-    private fun <T> Cursor.readRows(readRow: () -> T): List<T> =
-        generateSequence { if (moveToNext()) readRow() else null }.toList()
-
     private class FolderRow(val path: String, val isCue: Boolean)
 
     private class TrackRow(val folderId: Long, val hasCueMarkers: Boolean, val track: PlayerTrack)
@@ -101,3 +98,6 @@ class PlayerLibrary(private val contentResolver: ContentResolver) : Library {
         const val FOLDER_LOOKUP_CHUNK_SIZE = 500
     }
 }
+
+internal fun <T> Cursor.readRows(readRow: () -> T): List<T> =
+    generateSequence { if (moveToNext()) readRow() else null }.toList()

@@ -17,6 +17,12 @@ object PlayerContract {
     /** The authority plus the `folders` table path. */
     val FOLDERS_URI: Uri = Uri.parse("content://$AUTHORITY/folders")
 
+    /** The authority plus the `playlists` table path (TableDefs.Playlists). */
+    val PLAYLISTS_URI: Uri = Uri.parse("content://$AUTHORITY/playlists")
+
+    /** The entries of one playlist, in the player's `playlists/<id>/files` path. */
+    fun playlistFilesUri(playlistId: Long): Uri = Uri.parse("content://$AUTHORITY/playlists/$playlistId/files")
+
     /** The API receiver component class. */
     const val API_RECEIVER_CLASS = "com.maxmpz.audioplayer.player.PowerampAPIReceiver"
 
@@ -87,5 +93,20 @@ object PlayerContract {
 
         /** TableDefs.Folders.PATH, full folder path with a trailing slash. */
         const val FOLDER_PATH = "path"
+
+        /** TableDefs.Playlists._ID */
+        const val PLAYLIST_ID = "playlists._id"
+
+        /** TableDefs.Playlists.PLAYLIST, the playlist's name. */
+        const val PLAYLIST_NAME = "playlists.playlist"
+
+        /** TableDefs.Playlists.NUM_FILES, how many entries the playlist holds. */
+        const val PLAYLIST_NUM_FILES = "playlists.num_files"
+
+        /** The `folder_files._id` of a playlist entry's song, which is [ID] of that song. */
+        const val ENTRY_FILE_ID = "folder_file_id"
+
+        /** TableDefs.PlaylistEntries.SORT, the entry's position in its playlist. */
+        const val ENTRY_SORT = "playlist_entries.sort"
     }
 }

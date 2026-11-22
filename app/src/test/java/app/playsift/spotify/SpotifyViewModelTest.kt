@@ -3,6 +3,7 @@ package app.playsift.spotify
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import app.playsift.files.FileLocation
 import app.playsift.files.FileSizes
+import app.playsift.player.PlayerPlaylist
 import app.playsift.player.PlayerTrack
 import kotlinx.coroutines.flow.first
 import java.io.File
@@ -43,6 +44,7 @@ class SpotifyViewModelTest {
     private val tokenStore = InMemoryTokenStore(SpotifyTokens("access", "refresh", Instant.parse("2026-11-22T01:00:00Z")))
     private val store = InMemorySendStore()
     private val scheduler = FakeSendScheduler()
+    private val playerPlaylists = FakePlayerPlaylists()
 
     @Before
     fun setUp() = Dispatchers.setMain(dispatcher)
@@ -66,6 +68,7 @@ class SpotifyViewModelTest {
             api = spotifyApi,
             matcher = SongMatcher(spotifyApi, dao, clock),
             publisher = PlaylistPublisher(spotifyApi, dao),
+            playerPlaylists = playerPlaylists,
             fileSizes = fileSizes,
             store = store,
             scheduler = scheduler,
@@ -219,6 +222,76 @@ class SpotifyViewModelTest {
         advanceUntilIdle()
 
         assertEquals(listOf(sendRequest(SourceChoice.TopPlayed, topCount = 25, playlistName = "Mine")), scheduler.startedRequests)
+    }
+
+    private val gym = PlayerPlaylist(1, "Gym", 3)
+    private val empty = PlayerPlaylist(2, "Empty", 0)
+
+    @Test
+    fun choosingPlayerPlaylistsLoadsThemAndSendIsBlockedUntilASongfulOneIsPicked() = runTest(dispatcher) {
+        playerPlaylists.playlists = listOf(gym, empty)
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.chooseSource(SourceChoice.PlayerPlaylist)
+        advanceUntilIdle()
+
+        assertEquals(listOf(gym, empty), viewModel.state.value.playerPlaylists)
+        assertTrue(!viewModel.state.value.canSend)
+        viewModel.choosePlayerPlaylist(empty.id)
+        assertTrue(!viewModel.state.value.canSend)
+        viewModel.choosePlayerPlaylist(gym.id)
+        assertTrue(viewModel.state.value.canSend)
+    }
+
+    @Test
+    fun pickingAPlayerPlaylistFillsTheNameUnlessTheUserTypedOne() = runTest(dispatcher) {
+        playerPlaylists.playlists = listOf(gym, empty)
+        val viewModel = viewModel()
+        advanceUntilIdle()
+        viewModel.chooseSource(SourceChoice.PlayerPlaylist)
+        advanceUntilIdle()
+
+        viewModel.choosePlayerPlaylist(gym.id)
+        assertEquals("Gym", viewModel.state.value.playlistName)
+        viewModel.choosePlayerPlaylist(empty.id)
+        assertEquals("Empty", viewModel.state.value.playlistName)
+        viewModel.setPlaylistName("Mine")
+        viewModel.choosePlayerPlaylist(gym.id)
+
+        assertEquals("Mine", viewModel.state.value.playlistName)
+    }
+
+    @Test
+    fun aPlayerPlaylistSendCarriesTheChosenPlaylist() = runTest(dispatcher) {
+        playerPlaylists.playlists = listOf(gym)
+        val viewModel = viewModel()
+        advanceUntilIdle()
+        viewModel.chooseSource(SourceChoice.PlayerPlaylist)
+        advanceUntilIdle()
+        viewModel.choosePlayerPlaylist(gym.id)
+
+        viewModel.send()
+        advanceUntilIdle()
+
+        assertEquals(
+            listOf(sendRequest(SourceChoice.PlayerPlaylist, playlistName = "Gym", playerPlaylistId = 1, playerPlaylistName = "Gym")),
+            scheduler.startedRequests,
+        )
+    }
+
+    @Test
+    fun aPlayerPlaylistReadFailureShowsAMessageAndNoList() = runTest(dispatcher) {
+        playerPlaylists.failure = SecurityException("no data permission")
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.chooseSource(SourceChoice.PlayerPlaylist)
+        advanceUntilIdle()
+
+        assertNotNull(viewModel.state.value.playerPlaylistsError)
+        assertTrue(viewModel.state.value.playerPlaylists.isEmpty())
+        assertTrue(!viewModel.state.value.isLoadingPlayerPlaylists)
     }
 
     @Test
@@ -385,7 +458,7 @@ class SpotifyViewModelTest {
     @Test
     fun unsureSongsFromABackgroundRunAppearOnTheResultScreen() = runTest(dispatcher) {
         api.catalogue = mapOf("Sure" to listOf(spotifyTrack("Sure")), "Maybe" to listOf(spotifyTrack("Maybe", durationMillis = 90_000)))
-        val runner = SendRunner(SongMatcher(api, dao, clock), PlaylistPublisher(api, dao)) { emptyList() }
+        val runner = SendRunner(SongMatcher(api, dao, clock), PlaylistPublisher(api, dao), FakePlayerPlaylists()) { emptyList() }
         val request = sendRequest(tickedTracks = listOf(songTrack(1, title = "Sure"), songTrack(2, title = "Maybe")))
 
         store.save(runner.run(request, { _, _ -> }, {}))

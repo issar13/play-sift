@@ -146,7 +146,9 @@ fun sendRequest(
     topCount: Int = 100,
     playlistName: String = "Play Sift picks",
     tickedTracks: List<app.playsift.player.PlayerTrack> = emptyList(),
-) = SendRequest(choice, topCount, playlistName, tickedTracks)
+    playerPlaylistId: Long? = null,
+    playerPlaylistName: String? = null,
+) = SendRequest(choice, topCount, playlistName, tickedTracks, playerPlaylistId, playerPlaylistName)
 
 fun savedSend(
     added: List<MatchedSong> = emptyList(),
@@ -160,3 +162,13 @@ fun savedSend(
     result = SendResult(playlist, added, skippedUnsure = emptyList(), notFound = notFound),
     unsure = unsure,
 )
+
+class FakePlayerPlaylists(
+    var playlists: List<app.playsift.player.PlayerPlaylist> = emptyList(),
+    var songIdsByPlaylist: Map<Long, List<Long>> = emptyMap(),
+    var failure: Exception? = null,
+) : app.playsift.player.PlayerPlaylists {
+    override suspend fun playlists(): List<app.playsift.player.PlayerPlaylist> = failure?.let { throw it } ?: playlists
+
+    override suspend fun songIds(playlistId: Long): List<Long> = songIdsByPlaylist.getValue(playlistId)
+}

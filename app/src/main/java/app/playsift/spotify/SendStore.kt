@@ -20,6 +20,8 @@ data class SendRequest(
     val topCount: Int,
     val playlistName: String,
     val tickedTracks: List<PlayerTrack>,
+    val playerPlaylistId: Long? = null,
+    val playerPlaylistName: String? = null,
 )
 
 /**
@@ -34,8 +36,10 @@ data class SavedSend(
     val result: SendResult,
     val unsure: List<UnsureSong>,
     val failureMessage: String? = null,
+    val playerPlaylistId: Long? = null,
+    val playerPlaylistName: String? = null,
 ) {
-    val source: SendSource get() = sourceFor(choice, topCount)
+    val source: SendSource get() = sourceFor(choice, topCount, playerPlaylistId, playerPlaylistName)
 }
 
 /** Keeps the request and the last outcome across process death. */

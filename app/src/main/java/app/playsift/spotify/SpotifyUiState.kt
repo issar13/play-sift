@@ -1,8 +1,9 @@
 package app.playsift.spotify
 
+import app.playsift.player.PlayerPlaylist
 import app.playsift.player.PlayerTrack
 
-enum class SourceChoice { TopPlayed, EverythingPlayed, TickedSongs }
+enum class SourceChoice { TopPlayed, EverythingPlayed, TickedSongs, PlayerPlaylist }
 
 /** A song that is now on Spotify and could be moved to the trash; [sizeBytes] is null when the file size is unknown. */
 data class OfferedSong(val track: PlayerTrack, val sizeBytes: Long?)
@@ -52,13 +53,32 @@ data class SpotifyUiState(
     val willUpdatePlaylist: Boolean = false,
     /** True while an unsure song's yes or skip is being saved, so the buttons cannot act on a second song. */
     val isDeciding: Boolean = false,
+    /** The music player's playlists, loaded when the user picks that source. */
+    val playerPlaylists: List<PlayerPlaylist> = emptyList(),
+    val selectedPlayerPlaylistId: Long? = null,
+    val isLoadingPlayerPlaylists: Boolean = false,
+    val playerPlaylistsError: String? = null,
 ) {
     val hasClientId: Boolean get() = !builtInClientIdMissing || clientIdOverride.isNotBlank()
 
     /** The typed count when it is a number above zero. */
     val topCount: Int? get() = topCountText.toIntOrNull()?.takeIf { it > 0 }
 
-    val canSend: Boolean get() = choice != SourceChoice.TopPlayed || topCount != null
+    val selectedPlayerPlaylist: PlayerPlaylist? get() = playerPlaylists.firstOrNull { it.id == selectedPlayerPlaylistId }
+
+    /** The source the current choice stands for; null while the player playlist source has no playlist picked. */
+    val source: SendSource?
+        get() = when (choice) {
+            SourceChoice.PlayerPlaylist -> selectedPlayerPlaylist?.let { SendSource.PlayerPlaylist(it.id, it.name) }
+            else -> sourceFor(choice, topCount ?: DEFAULT_TOP_COUNT)
+        }
+
+    val canSend: Boolean
+        get() = when (choice) {
+            SourceChoice.TopPlayed -> topCount != null
+            SourceChoice.PlayerPlaylist -> (selectedPlayerPlaylist?.songCount ?: 0) > 0
+            else -> true
+        }
 }
 
 const val DEFAULT_TOP_COUNT = 100

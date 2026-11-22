@@ -57,6 +57,33 @@ class DataStoreSendStoreTest {
     }
 
     @Test
+    fun aRequestAndResultSavedBeforePlayerPlaylistsStillDecode() = runTest {
+        val dataStore = dataStore()
+        dataStore.edit {
+            it[stringPreferencesKey("spotify_send_request")] =
+                """{"choice":"TopPlayed","topCount":50,"playlistName":"Old","tickedTracks":[]}"""
+            it[stringPreferencesKey("spotify_saved_send")] =
+                """{"choice":"EverythingPlayed","topCount":100,"playlistName":"Old","result":""" +
+                    """{"playlist":null,"added":[],"skippedUnsure":[],"notFound":[]},"unsure":[]}"""
+        }
+        val store = DataStoreSendStore(dataStore)
+
+        assertEquals(sendRequest(SourceChoice.TopPlayed, topCount = 50, playlistName = "Old"), store.request())
+        assertEquals(SendSource.EverythingPlayed, store.saved.first()?.source)
+        assertNull(store.saved.first()?.playerPlaylistId)
+    }
+
+    @Test
+    fun aPlayerPlaylistRequestRoundTrips() = runTest {
+        val store = DataStoreSendStore(dataStore())
+        val request = sendRequest(SourceChoice.PlayerPlaylist, playlistName = "Gym", playerPlaylistId = 4, playerPlaylistName = "Gym mix")
+
+        store.saveRequest(request)
+
+        assertEquals(request, store.request())
+    }
+
+    @Test
     fun clearingForgetsTheResultButNotTheRequest() = runTest {
         val store = DataStoreSendStore(dataStore())
         store.save(saved)
