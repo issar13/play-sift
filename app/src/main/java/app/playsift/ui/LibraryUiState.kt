@@ -28,6 +28,10 @@ data class LibraryUiState(
 enum class UserMessage(val text: String) {
     TrashPreparationFailed("Couldn't check your files. Nothing was moved to the trash. Try again."),
     CutoffNotSaved("Couldn't save your cutoff. It will reset when you reopen the app."),
+    HistoryExported("History saved to Documents/PlaySift."),
+    HistoryExportFailed("Couldn't save the history file. Try again."),
+    HistoryImported("History imported."),
+    HistoryImportFailed("Couldn't read that history file. Nothing was changed."),
 }
 
 data class TrashPlan(

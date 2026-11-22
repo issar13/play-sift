@@ -12,8 +12,7 @@ import app.playsift.files.TrackFile
 import app.playsift.files.TrackFileMatcher
 import app.playsift.files.trashBatches
 import app.playsift.history.PlayHistory
-import app.playsift.history.PlayHistoryDatabase
-import app.playsift.history.RoomPlayHistory
+import app.playsift.history.roomPlayHistory
 import app.playsift.history.historySummary
 import app.playsift.history.mergeHistory
 import app.playsift.history.tracksFor
@@ -119,6 +118,33 @@ class LibraryViewModel(
         }
         reload()
     }
+
+    fun exportHistory() {
+        viewModelScope.launch {
+            mutableMessage.value = messageAfter(UserMessage.HistoryExported, UserMessage.HistoryExportFailed) { history.exportNow() }
+        }
+    }
+
+    /** [readBackupText] runs inside the same guard, so an unreadable or damaged file shows a message and changes nothing. */
+    fun importHistory(readBackupText: suspend () -> String) {
+        viewModelScope.launch {
+            val message = messageAfter(UserMessage.HistoryImported, UserMessage.HistoryImportFailed) {
+                history.importFrom(readBackupText())
+            }
+            mutableMessage.value = message
+            if (message == UserMessage.HistoryImported) reload()
+        }
+    }
+
+    private suspend fun messageAfter(success: UserMessage, failure: UserMessage, action: suspend () -> Unit): UserMessage =
+        try {
+            action()
+            success
+        } catch (exception: CancellationException) {
+            throw exception
+        } catch (_: Exception) {
+            failure
+        }
 
     fun messageShown() {
         mutableMessage.value = null
@@ -338,7 +364,7 @@ class LibraryViewModel(
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T = LibraryViewModel(
                 library = PlayerLibrary(application.contentResolver),
-                history = RoomPlayHistory(PlayHistoryDatabase.open(application).playHistoryDao(), Clock.systemUTC()),
+                history = roomPlayHistory(application),
                 access = PlayerAccess(application),
                 matcher = TrackFileMatcher(application.contentResolver),
                 fileSizes = MediaStoreFileSizes(application.contentResolver),

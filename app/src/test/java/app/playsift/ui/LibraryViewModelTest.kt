@@ -74,6 +74,20 @@ private class FakeLibrary(var tracks: List<PlayerTrack>) : Library {
 
 /** Runs the real snapshot rules against an in-memory list of stored rows. */
 private class FakePlayHistory(var stored: List<PlayHistoryEntry> = emptyList()) : PlayHistory {
+    var exports = 0
+    var importedText: String? = null
+    var failure: Throwable? = null
+
+    override suspend fun exportNow() {
+        failure?.let { throw it }
+        exports += 1
+    }
+
+    override suspend fun importFrom(json: String) {
+        failure?.let { throw it }
+        importedText = json
+    }
+
     override suspend fun record(playerTracks: List<PlayerTrack>): List<PlayHistoryEntry> =
         snapshotHistory(stored, playerTracks, now).entries.also { stored = it }
 }
@@ -539,6 +553,52 @@ class LibraryViewModelTest {
         assertEquals(storedFirstSeen, home.trackingSince)
         assertEquals(1, home.playedSongs)
         assertEquals(2, home.deleteCandidates)
+    }
+
+    @Test
+    fun exportShowsSavedMessage() = runTest(dispatcher) {
+        val history = FakePlayHistory()
+        val viewModel = viewModel(history = history)
+        advanceUntilIdle()
+        viewModel.exportHistory()
+        advanceUntilIdle()
+        assertEquals(1, history.exports)
+        assertEquals(UserMessage.HistoryExported, viewModel.message.value)
+    }
+
+    @Test
+    fun exportFailureShowsMessage() = runTest(dispatcher) {
+        val history = FakePlayHistory().also { it.failure = IOException("no space") }
+        val viewModel = viewModel(history = history)
+        advanceUntilIdle()
+        viewModel.exportHistory()
+        advanceUntilIdle()
+        assertEquals(UserMessage.HistoryExportFailed, viewModel.message.value)
+    }
+
+    @Test
+    fun importReloadsAndShowsMessage() = runTest(dispatcher) {
+        val history = FakePlayHistory()
+        val library = FakeLibrary((1L..3L).map(::track))
+        val viewModel = viewModel(library = library, history = history)
+        advanceUntilIdle()
+        val queriesBefore = library.trackQueries
+        viewModel.importHistory { "backup text" }
+        advanceUntilIdle()
+        assertEquals("backup text", history.importedText)
+        assertEquals(UserMessage.HistoryImported, viewModel.message.value)
+        assertEquals(queriesBefore + 1, library.trackQueries)
+    }
+
+    @Test
+    fun unreadableImportShowsMessageAndChangesNothing() = runTest(dispatcher) {
+        val history = FakePlayHistory()
+        val viewModel = viewModel(history = history)
+        advanceUntilIdle()
+        viewModel.importHistory { throw IOException("cannot open") }
+        advanceUntilIdle()
+        assertEquals(null, history.importedText)
+        assertEquals(UserMessage.HistoryImportFailed, viewModel.message.value)
     }
 
     @Test

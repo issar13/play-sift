@@ -27,4 +27,10 @@ abstract class PlayHistoryDao {
         upsert(snapshot.entries)
         return snapshot.entries
     }
+
+    /** Merges a backup file into the stored rows in one transaction. */
+    @Transaction
+    open suspend fun importEntries(imported: List<PlayHistoryEntry>) {
+        upsert(mergeImported(all(), imported))
+    }
 }

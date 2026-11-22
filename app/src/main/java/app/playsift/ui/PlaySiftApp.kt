@@ -54,7 +54,9 @@ import app.playsift.files.trashRequest
 import app.playsift.player.AccessState
 import java.time.LocalDate
 import java.time.ZoneOffset
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private val tabs = listOf(
     "Home" to Screen.Home,
@@ -86,6 +88,14 @@ fun PlaySiftApp(viewModel: LibraryViewModel) {
                 trashLauncher.launch(IntentSenderRequest.Builder(trashRequest(context.contentResolver, batch).intentSender).build())
             } catch (_: Exception) {
                 viewModel.onBatchResult(resultOk = false)
+            }
+        }
+    }
+
+    val importHistoryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { backupUri ->
+        backupUri?.let {
+            viewModel.importHistory {
+                withContext(Dispatchers.IO) { context.contentResolver.openInputStream(backupUri)!!.bufferedReader().use { it.readText() } }
             }
         }
     }
@@ -222,7 +232,12 @@ fun PlaySiftApp(viewModel: LibraryViewModel) {
                         }
                     },
                 )
-                state.screen == Screen.Settings -> SettingsScreen(selected = state.cutoff, onSelect = viewModel::setCutoff)
+                state.screen == Screen.Settings -> SettingsScreen(
+                    selected = state.cutoff,
+                    onSelect = viewModel::setCutoff,
+                    onExportHistory = viewModel::exportHistory,
+                    onImportHistory = { importHistoryLauncher.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) },
+                )
                 state.screen == Screen.Large -> LargeSongsScreen(
                     state = state,
                     onBack = { viewModel.showScreen(Screen.Home) },
