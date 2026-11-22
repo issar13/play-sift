@@ -60,6 +60,9 @@ interface SpotifyApi {
     /** Spotify's id for the signed-in account. */
     suspend fun currentUserId(): String
 
+    /** True when the signed-in account still follows the playlist: a playlist deleted in the Spotify app is only unfollowed. */
+    suspend fun followsPlaylist(playlistId: String): Boolean
+
     suspend fun createPlaylist(name: String): SpotifyPlaylist
 
     /** Replaces everything in the playlist with [uris], which must hold at most [PLAYLIST_BATCH_SIZE] items. */
@@ -71,6 +74,7 @@ interface SpotifyApi {
 
 private const val API_URL = "https://api.spotify.com/v1/"
 private const val SEARCH_RESULT_LIMIT = 5
+private const val FOLLOWED_PLAYLISTS_PAGE_SIZE = 50
 
 /** How many tracks one search for options asks for. */
 const val OPTION_SEARCH_LIMIT = 8
@@ -120,6 +124,12 @@ private data class PlaylistDto(val id: String, @SerialName("external_urls") val 
 private data class ExternalUrlsDto(val spotify: String)
 
 @Serializable
+private data class FollowedPlaylistsResponse(val items: List<PlaylistIdDto>, val next: String? = null)
+
+@Serializable
+private data class PlaylistIdDto(val id: String)
+
+@Serializable
 private data class CreatePlaylistBody(val name: String, val public: Boolean, val description: String)
 
 @Serializable
@@ -165,7 +175,7 @@ class OkHttpSpotifyApi(
     }
 
     override suspend fun currentUserName(): String {
-        val user = currentUser()
+        val user = json.decodeFromString<UserDto>(execute(userRequest(), SCREEN_WAIT_LIMIT))
         return user.displayName ?: user.id
     }
 
@@ -177,7 +187,28 @@ class OkHttpSpotifyApi(
     }
 
     private suspend fun currentUser(): UserDto =
-        json.decodeFromString<UserDto>(execute(RequestSpec("GET", baseUrl.newBuilder().addPathSegment("me").build(), null)))
+        json.decodeFromString<UserDto>(execute(userRequest()))
+
+    private fun userRequest() = RequestSpec("GET", baseUrl.newBuilder().addPathSegment("me").build(), null)
+
+    override suspend fun followsPlaylist(playlistId: String): Boolean {
+        val firstPage = baseUrl.newBuilder()
+            .addPathSegment("me")
+            .addPathSegment("playlists")
+            .addQueryParameter("limit", FOLLOWED_PLAYLISTS_PAGE_SIZE.toString())
+            .build()
+        return followedPlaylistsContain(playlistId, firstPage)
+    }
+
+    private tailrec suspend fun followedPlaylistsContain(playlistId: String, pageUrl: HttpUrl): Boolean {
+        val page = json.decodeFromString<FollowedPlaylistsResponse>(execute(RequestSpec("GET", pageUrl, null)))
+        val nextPageUrl = page.next?.toHttpUrl()
+        return when {
+            page.items.any { it.id == playlistId } -> true
+            nextPageUrl == null -> false
+            else -> followedPlaylistsContain(playlistId, nextPageUrl)
+        }
+    }
 
     override suspend fun createPlaylist(name: String): SpotifyPlaylist {
         val url = baseUrl.newBuilder().addPathSegment("me").addPathSegment("playlists").build()

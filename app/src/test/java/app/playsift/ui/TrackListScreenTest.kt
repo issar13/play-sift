@@ -76,6 +76,18 @@ class TrackListScreenTest {
     }
 
     @Test
+    fun deleteButtonShowsTheSizeWhenEverySelectedSizeIsKnown() {
+        show(state(selectedIds = setOf(1L, 2L)).copy(sizesById = mapOf(1L to 4_000_000L, 2L to 1_500_000L)))
+        composeRule.onNodeWithText("Move 2 to trash (5.5 MB)").assertIsEnabled()
+    }
+
+    @Test
+    fun deleteButtonOmitsTheSizeWhenOneSelectedSizeIsUnknown() {
+        show(state(selectedIds = setOf(1L, 2L)).copy(sizesById = mapOf(1L to 4_000_000L)))
+        composeRule.onNodeWithText("Move 2 to trash").assertIsEnabled()
+    }
+
+    @Test
     fun mostPlayedActionBarOffersSendToSpotifyOnly() {
         show(state(list = LibraryList.MostPlayed, selectedIds = setOf(1L, 2L)))
         composeRule.onNodeWithText("Send 2 to Spotify").assertIsEnabled()

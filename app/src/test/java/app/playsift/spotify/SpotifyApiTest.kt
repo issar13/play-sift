@@ -11,6 +11,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
 
@@ -134,6 +135,16 @@ class SpotifyApiTest {
     }
 
     @Test
+    fun theProfileNameUsesTheShortCap() = runTest {
+        server.enqueue(reply(429, retryAfter = "300"))
+
+        val failure = failureOf<SpotifyHttpException> { api.currentUserName() }
+
+        assertEquals(300L, failure.retryAfterSeconds)
+        assertEquals(emptyList<Long>(), pauses)
+    }
+
+    @Test
     fun aShortPauseSeparatesConsecutiveRequests() = runTest {
         server.enqueue(reply(200, """{"tracks":{"items":[]}}"""))
         server.enqueue(reply(200, """{"tracks":{"items":[]}}"""))
@@ -210,6 +221,28 @@ class SpotifyApiTest {
     }
 
     @Test
+    fun followsPlaylistPagesThroughTheUsersPlaylists() = runTest {
+        val secondPage = server.url("/v1/me/playlists?limit=50&offset=50")
+        server.enqueue(reply(200, """{"items":[{"id":"a"},{"id":"b"}],"next":"$secondPage"}"""))
+        server.enqueue(reply(200, """{"items":[{"id":"wanted"}],"next":null}"""))
+
+        assertEquals(true, api.followsPlaylist("wanted"))
+
+        val firstRequest = server.takeRequest()
+        assertEquals("/v1/me/playlists", firstRequest.url.encodedPath)
+        assertEquals("50", firstRequest.url.queryParameter("limit"))
+        assertEquals("50", server.takeRequest().url.queryParameter("offset"))
+    }
+
+    @Test
+    fun followsPlaylistIsFalseWhenNoPageHoldsIt() = runTest {
+        server.enqueue(reply(200, """{"items":[{"id":"a"}],"next":null}"""))
+
+        assertEquals(false, api.followsPlaylist("wanted"))
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
     fun otherErrorsCarryTheStatus() = runTest {
         server.enqueue(reply(404))
 
@@ -263,6 +296,26 @@ class SpotifyAccountsTest {
     }
 
     @Test
+    fun aRefusedRefreshKeepsTheOAuthErrorCode() = runTest {
+        server.enqueue(MockResponse.Builder().code(400).body("""{"error":"invalid_client","error_description":"x"}""").build())
+
+        val failure = failureOf<SpotifyAuthException> { accounts().refresh("c", "old-refresh") }
+
+        assertEquals(400, failure.status)
+        assertEquals("invalid_client", failure.error)
+    }
+
+    @Test
+    fun aRefusalThatIsNotJsonHasNoErrorCode() = runTest {
+        server.enqueue(MockResponse.Builder().code(502).body("<html>bad gateway</html>").build())
+
+        val failure = failureOf<SpotifyAuthException> { accounts().refresh("c", "old-refresh") }
+
+        assertEquals(502, failure.status)
+        assertNull(failure.error)
+    }
+
+    @Test
     fun authorizationUrlCarriesTheChallengeScopesAndRedirect() {
         val url = authorizationUrl("client-1", "challenge-1", "state-1").toHttpUrl()
 
@@ -275,5 +328,10 @@ class SpotifyAccountsTest {
         assertEquals("state-1", url.queryParameter("state"))
         assertEquals("playsift://spotify-callback", url.queryParameter("redirect_uri"))
         assertEquals(SPOTIFY_SCOPES, url.queryParameter("scope"))
+    }
+
+    @Test
+    fun theScopesIncludeCollaborativePlaylists() {
+        assertEquals(true, SPOTIFY_SCOPES.split(" ").contains("playlist-read-collaborative"))
     }
 }

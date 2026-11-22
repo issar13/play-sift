@@ -33,7 +33,7 @@ fun AccessScreen(
     }
 }
 
-private fun accessMessage(access: AccessState) = when (access) {
+internal fun accessMessage(access: AccessState) = when (access) {
     AccessState.NotInstalled -> "Your music player isn't installed."
     AccessState.NeedsUpdate -> "Update your music player to use Play Sift."
     AccessState.NeedsPermission -> "Allow Play Sift to read your music player's library."

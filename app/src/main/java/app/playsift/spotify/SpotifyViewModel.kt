@@ -8,6 +8,7 @@ import app.playsift.files.fileLocation
 import app.playsift.player.PlayerPlaylists
 import app.playsift.player.PlayerTrack
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
@@ -48,6 +49,10 @@ class SpotifyViewModel(
 
     private val decisionLock = Mutex()
     private val optionSearch = OptionSearch(api)
+    private var userNameJob: Job? = null
+
+    /** Moved-to-trash ids whose save failed, kept so the next save includes them. */
+    private var unsavedTrashedIds = emptySet<Long>()
 
     init {
         viewModelScope.launch {
@@ -59,6 +64,7 @@ class SpotifyViewModel(
             combine(store.saved, scheduler.state) { saved, work -> saved to work }.collect { (saved, work) ->
                 val stage = stageFor(saved, work)
                 mutableState.update { it.copy(stage = stage) }
+                if (stage is SpotifyStage.Failed) refreshSignInState()
             }
         }
     }
@@ -68,7 +74,7 @@ class SpotifyViewModel(
         viewModelScope.launch {
             val effectiveClientId = clientId.effective()
             if (effectiveClientId.isBlank()) return@launch
-            val pending = PendingAuthorization(verifier = newCodeVerifier(), state = newAuthorizationState())
+            val pending = PendingAuthorization(verifier = newCodeVerifier(), state = newAuthorizationState(), clientId = effectiveClientId)
             tokenStore.savePendingAuthorization(pending)
             openBrowser(authorizationUrl(effectiveClientId, codeChallengeFor(pending.verifier), pending.state))
         }
@@ -83,7 +89,8 @@ class SpotifyViewModel(
                 return@launch
             }
             try {
-                session.completeSignIn(code, pending.verifier)
+                session.completeSignIn(code, pending.verifier, pending.clientId)
+                tokenStore.clearPendingAuthorization()
                 refreshSignInState()
             } catch (exception: CancellationException) {
                 throw exception
@@ -96,6 +103,7 @@ class SpotifyViewModel(
     fun signOut() {
         viewModelScope.launch {
             session.signOut()
+            userNameJob?.cancel()
             mutableState.update { it.copy(isSignedIn = false, userName = null, stage = SpotifyStage.Setup) }
         }
     }
@@ -273,7 +281,7 @@ class SpotifyViewModel(
                 } catch (exception: CancellationException) {
                     throw exception
                 } catch (exception: Exception) {
-                    mutableState.update { it.copy(picker = it.picker?.copy(errorMessage = failureText(exception))) }
+                    mutableState.update { it.copy(picker = it.picker?.copy(errorMessage = pickerFailureText(exception))) }
                 }
             }
         }
@@ -285,7 +293,7 @@ class SpotifyViewModel(
         } catch (exception: CancellationException) {
             throw exception
         } catch (exception: Exception) {
-            PickerState(track, isLoading = false, errorMessage = failureText(exception))
+            PickerState(track, isLoading = false, errorMessage = pickerFailureText(exception))
         }
 
     private suspend fun addedByHand(saved: SavedSend, track: PlayerTrack, option: SpotifyTrack): SavedSend {
@@ -316,6 +324,26 @@ class SpotifyViewModel(
         }
     }
 
+    /** Takes songs Play Sift just moved to the trash off the offer, so they are not listed again. */
+    fun songsMovedToTrash(trackIds: Set<Long>) {
+        if (trackIds.isEmpty()) return
+        unsavedTrashedIds = unsavedTrashedIds + trackIds
+        viewModelScope.launch {
+            decisionLock.withLock {
+                val saved = store.saved.first() ?: return@launch
+                val idsToSave = unsavedTrashedIds
+                try {
+                    store.save(saved.copy(movedToTrashIds = saved.movedToTrashIds + idsToSave))
+                    unsavedTrashedIds = unsavedTrashedIds - idsToSave
+                } catch (exception: CancellationException) {
+                    throw exception
+                } catch (_: Exception) {
+                    showMessage(TRASH_RESULT_NOT_SAVED_MESSAGE)
+                }
+            }
+        }
+    }
+
     fun toggleOffered(trackId: Long) = updateDone { done ->
         done.copy(selectedIds = if (trackId in done.selectedIds) done.selectedIds - trackId else done.selectedIds + trackId)
     }
@@ -337,7 +365,7 @@ class SpotifyViewModel(
         }
 
     private suspend fun doneStage(saved: SavedSend): SpotifyStage.Done {
-        val offer = offerFor(saved.result)
+        val offer = offerFor(saved)
         val keptSelection = (mutableState.value.stage as? SpotifyStage.Done)?.selectedIds.orEmpty()
         return SpotifyStage.Done(saved.result, saved.unsure, offer, selectedIds = keptSelection.intersect(offer.map { it.track.id }.toSet()))
     }
@@ -356,6 +384,7 @@ class SpotifyViewModel(
                         throw exception
                     } catch (exception: Exception) {
                         showMessage(failureText(exception))
+                        refreshSignInState()
                     }
                 }
             } finally {
@@ -375,9 +404,9 @@ class SpotifyViewModel(
             else -> saved
         }
 
-    private suspend fun offerFor(result: SendResult): List<OfferedSong> {
+    private suspend fun offerFor(saved: SavedSend): List<OfferedSong> {
         val sizes = knownSizes()
-        return trashOffer(result).map { track -> OfferedSong(track, track.fileLocation()?.let(sizes::get)) }
+        return trashOffer(saved.result).filterNot { it.id in saved.movedToTrashIds }.map { track -> OfferedSong(track, track.fileLocation()?.let(sizes::get)) }
     }
 
     /** Sizes are display only, so a failed read shows the songs without sizes. */
@@ -390,10 +419,12 @@ class SpotifyViewModel(
             emptyMap()
         }
 
+    /** Signed in means tokens are stored; the name is loaded on its own, so a slow profile request never holds anything up. */
     private suspend fun refreshSignInState() {
         val signedIn = session.isSignedIn()
-        val userName = if (signedIn) userNameOrNull() else null
-        mutableState.update { it.copy(isSignedIn = signedIn, userName = userName) }
+        mutableState.update { it.copy(isSignedIn = signedIn, userName = if (signedIn) it.userName else null) }
+        userNameJob?.cancel()
+        if (signedIn) userNameJob = viewModelScope.launch { mutableState.update { it.copy(userName = userNameOrNull()) } }
     }
 
     /** The name is a nicety, so a failure to fetch it never blocks signing in. */
@@ -414,3 +445,5 @@ private const val PLAYED_COUNT_FAILED_MESSAGE = "Couldn't read your play counts.
 private const val PLAYER_PLAYLISTS_FAILED_MESSAGE = "Couldn't read your music player's playlists. Check that Play Sift can read your music player's library."
 
 private const val ALREADY_RUNNING_MESSAGE = "A send to Spotify is already running. Wait for it to finish or cancel it first."
+
+private const val TRASH_RESULT_NOT_SAVED_MESSAGE = "Couldn't save the result list. The songs are in the trash."

@@ -22,6 +22,15 @@ abstract class PlayHistoryDao {
     @Delete
     abstract suspend fun delete(entries: List<PlayHistoryEntry>)
 
+    @Query("UPDATE play_history SET trashedAt = :trashedAt WHERE folderPath = :folderPath AND fileName = :fileName AND cueTitle = :cueTitle")
+    abstract suspend fun markTrashed(folderPath: String, fileName: String, cueTitle: String, trashedAt: Instant)
+
+    /** Marks the rows for [keys] in one transaction; a key with no stored row is ignored. */
+    @Transaction
+    open suspend fun markTrashed(keys: List<HistoryKey>, trashedAt: Instant) {
+        keys.forEach { key -> markTrashed(key.folderPath, key.fileName, key.cueTitle, trashedAt) }
+    }
+
     /** Reads, folds in [playerTracks] and writes in one transaction, so two snapshots can never interleave. */
     @Transaction
     open suspend fun record(playerTracks: List<PlayerTrack>, now: Instant): List<PlayHistoryEntry> {

@@ -46,6 +46,8 @@ When the playlist is ready you can open it in the Spotify app. Then, as a separa
 
 This needs your own free Spotify developer app (Client ID only, no password stored) with the redirect address `playsift://spotify-callback`. Put the Client ID in `local.properties` as `spotify.clientId=...` before building, or type it in the Spotify screen.
 
+Play Sift also asks Spotify for permission to read collaborative playlists, so it can find a playlist it made earlier. Accounts signed in before this was added keep working, and the permission is requested the next time you sign in.
+
 ### Clean up safely
 
 - Nothing is ticked by default, so you choose exactly what to remove.

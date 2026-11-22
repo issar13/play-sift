@@ -17,6 +17,9 @@ interface PlayHistory {
     /** Merges a backup file's text into the stored history. */
     suspend fun importFrom(json: String)
 
+    /** Marks the history rows of songs Play Sift just moved to the trash, so a re-added song starts a fresh row. */
+    suspend fun markTrashed(tracks: List<PlayerTrack>)
+
     /** True before the first snapshot of a fresh install. */
     suspend fun isEmpty(): Boolean
 }
@@ -42,6 +45,9 @@ class RoomPlayHistory(
     override suspend fun exportNow() = backupFile.write(encodeHistory(dao.all(), clock.instant()))
 
     override suspend fun importFrom(json: String) = dao.importEntries(decodeHistory(json))
+
+    override suspend fun markTrashed(tracks: List<PlayerTrack>) =
+        inObservationOrder { dao.markTrashed(tracks.map { it.historyKey() }, clock.instant()) }
 
     override suspend fun isEmpty() = dao.count() == 0
 }

@@ -10,6 +10,7 @@ import app.playsift.files.FileSizes
 import app.playsift.files.MediaStoreFileSizes
 import app.playsift.files.TrackFile
 import app.playsift.files.TrackFileMatcher
+import app.playsift.files.fileLocation
 import app.playsift.files.trashBatches
 import app.playsift.history.PlayHistory
 import app.playsift.history.PlayHistoryEntry
@@ -233,6 +234,9 @@ class LibraryViewModel(
     suspend fun prepareTrashForRemembered(selectedIds: Set<Long>): TrashPlan? =
         prepareTrash(selectedIds, rememberedTrashCandidates ?: mutableState.value.tracks)
 
+    /** True while the trash flow was started from the Spotify result rather than an open list. */
+    val isTrashingSpotifyResult: Boolean get() = rememberedTrashCandidates != null
+
     fun confirmTrash() {
         val confirming = mutableTrashFlow.value as? TrashFlow.Confirming ?: return
         advanceTrash(confirming.plan.batches, movedCount = 0, attemptedCount = confirming.plan.removable.size)
@@ -250,10 +254,26 @@ class LibraryViewModel(
         return inProgress.currentBatch
     }
 
-    fun onBatchResult(resultOk: Boolean) {
-        val inProgress = mutableTrashFlow.value as? TrashFlow.InProgress ?: return
+    /** Returns the ids of the songs this batch moved to the trash, so the Spotify result can stop offering them at once. */
+    fun onBatchResult(resultOk: Boolean): Set<Long> {
+        val inProgress = mutableTrashFlow.value as? TrashFlow.InProgress ?: return emptySet()
         val movedCount = inProgress.movedCount + if (resultOk) inProgress.currentBatch.size else 0
+        if (resultOk) markTrashedInHistory(inProgress.currentBatch)
         advanceTrash(inProgress.remainingBatches, movedCount, inProgress.attemptedCount)
+        return if (resultOk) inProgress.currentBatch.map { it.track.id }.toSet() else emptySet()
+    }
+
+    /** A nicety for later relinking: a failure to mark never affects the trash that already happened. */
+    private fun markTrashedInHistory(batch: List<TrackFile.Removable>) {
+        viewModelScope.launch {
+            try {
+                history.markTrashed(batch.map { it.track })
+            } catch (exception: CancellationException) {
+                throw exception
+            } catch (_: Exception) {
+                // The row stays unmarked, which only means a re-added copy of the song may be relinked to it.
+            }
+        }
     }
 
     fun finishTrash() {
@@ -394,7 +414,12 @@ class LibraryViewModel(
             Screen.Settings, Screen.Spotify -> ScreenContent(emptyList(), null, emptyMap())
             Screen.MostPlayed -> listContent(LibraryList.MostPlayed, allTracks, period, now)
             Screen.NeverPlayed -> listContent(LibraryList.NeverPlayed, allTracks, period, now)
-            Screen.Delete -> listContent(LibraryList.DeleteCandidates, allTracks, period, now)
+            Screen.Delete -> {
+                val sizes = sizesOrNull(current.hasFileAccess).orEmpty()
+                val deleteTracks = tracksFor(LibraryList.DeleteCandidates, allTracks, period, now)
+                val sizesById = deleteTracks.mapNotNull { track -> track.fileLocation()?.let(sizes::get)?.let { sizeBytes -> track.id to sizeBytes } }.toMap()
+                ScreenContent(deleteTracks, null, sizesById)
+            }
         }
     }
 

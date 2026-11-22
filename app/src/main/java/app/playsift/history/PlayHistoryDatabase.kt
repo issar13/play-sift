@@ -70,6 +70,13 @@ val MIGRATION_3_4 = object : Migration(3, 4) {
     }
 }
 
+/** Rows of songs Play Sift moved to the trash are marked, so a re-added song never takes one over. */
+val MIGRATION_4_5 = object : Migration(4, 5) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `play_history` ADD COLUMN `trashedAt` INTEGER")
+    }
+}
+
 class InstantConverters {
     @TypeConverter
     fun toEpochMillis(instant: Instant?): Long? = instant?.toEpochMilli()
@@ -78,7 +85,7 @@ class InstantConverters {
     fun fromEpochMillis(epochMillis: Long?): Instant? = epochMillis?.let(Instant::ofEpochMilli)
 }
 
-@Database(entities = [PlayHistoryEntry::class, SpotifyMatchEntry::class, SpotifyPlaylistEntry::class], version = 4)
+@Database(entities = [PlayHistoryEntry::class, SpotifyMatchEntry::class, SpotifyPlaylistEntry::class], version = 5)
 @TypeConverters(InstantConverters::class)
 abstract class PlayHistoryDatabase : RoomDatabase() {
     abstract fun playHistoryDao(): PlayHistoryDao
@@ -88,7 +95,7 @@ abstract class PlayHistoryDatabase : RoomDatabase() {
     companion object {
         const val FILE_NAME = "play_history.db"
 
-        val MIGRATIONS = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+        val MIGRATIONS = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
 
         @Volatile
         private var instance: PlayHistoryDatabase? = null

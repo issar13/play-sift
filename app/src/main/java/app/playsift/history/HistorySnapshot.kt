@@ -12,7 +12,8 @@ fun PlayerTrack.historyKey() = HistoryKey(folderPath.orEmpty(), fileName, cueTit
  * Folds the player's current counts into the [stored] rows.
  *
  * A count lower than the last seen one means the player was reset, so the old count moves into carried plays.
- * A song at a new location takes over a stored row only when exactly one stored row (whose location is gone)
+ * A song at a new location takes over a stored row only when exactly one stored row (whose location is gone and which
+ * Play Sift did not move to the trash)
  * and exactly one new song share its title and artist; anything less certain starts a fresh row.
  * Songs that share one key (same file, and for cue tracks the same title) collapse to the one with the highest count.
  */
@@ -20,7 +21,7 @@ fun snapshotHistory(stored: List<PlayHistoryEntry>, playerTracks: List<PlayerTra
     val storedByKey = stored.associateBy { it.historyKey() }
     val tracksByKey = playerTracks.groupBy { it.historyKey() }.mapValues { (_, sharingTracks) -> sharingTracks.maxBy { it.playCount } }
     val newTracks = tracksByKey.filterKeys { it !in storedByKey }.values
-    val orphanRows = stored.filter { it.historyKey() !in tracksByKey }
+    val orphanRows = stored.filter { it.historyKey() !in tracksByKey && it.trashedAt == null }
     val relinkedRows = newTracks
         .filter { track -> track.title.isNotBlank() && newTracks.count { it.isSameSong(track) } == 1 }
         .mapNotNull { track -> orphanRows.filter { it.isSameSong(track) }.singleOrNull()?.let { row -> track.historyKey() to row } }

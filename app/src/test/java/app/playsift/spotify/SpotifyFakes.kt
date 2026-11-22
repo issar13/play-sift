@@ -56,6 +56,11 @@ open class FakeSpotifyApi(var catalogue: Map<String, List<SpotifyTrack>> = empty
 
     override suspend fun currentUserId() = userId
 
+    /** Playlist ids the user unfollowed in the Spotify app; the items endpoint still accepts them. */
+    var unfollowedPlaylistIds = setOf<String>()
+
+    override suspend fun followsPlaylist(playlistId: String) = playlistId !in unfollowedPlaylistIds && playlistId !in deletedPlaylistIds
+
     override suspend fun createPlaylist(name: String): SpotifyPlaylist {
         createdNames += name
         return SpotifyPlaylist("playlist-${createdNames.size}", "https://open.spotify.com/playlist/playlist-${createdNames.size}")
@@ -116,7 +121,11 @@ class InMemorySendStore(initial: SavedSend? = null) : SendStore {
         storedRequest = request
     }
 
+    /** When set, [save] throws it, like a write that fails. */
+    var saveFailure: Exception? = null
+
     override suspend fun save(saved: SavedSend) {
+        saveFailure?.let { throw it }
         savedState.value = saved
     }
 
