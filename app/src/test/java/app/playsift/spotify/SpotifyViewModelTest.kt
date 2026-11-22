@@ -1,0 +1,747 @@
+package app.playsift.spotify
+
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import app.playsift.files.FileLocation
+import app.playsift.files.FileSizes
+import app.playsift.player.PlayerPlaylist
+import app.playsift.player.PlayerTrack
+import kotlinx.coroutines.flow.first
+import java.io.File
+import java.time.Clock
+import java.time.Instant
+import java.time.ZoneOffset
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.TemporaryFolder
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class SpotifyViewModelTest {
+    @get:Rule
+    val folder = TemporaryFolder()
+
+    private val dispatcher = StandardTestDispatcher()
+    private val clock = Clock.fixed(Instant.parse("2026-11-22T00:00:00Z"), ZoneOffset.UTC)
+    private val dataStoreScope = CoroutineScope(dispatcher + SupervisorJob())
+    private val api = FakeSpotifyApi()
+    private val dao = FakeSpotifyDao()
+    private val accounts = FakeAccounts()
+    private val tokenStore = InMemoryTokenStore(SpotifyTokens("access", "refresh", Instant.parse("2026-11-22T01:00:00Z")))
+    private val store = InMemorySendStore()
+    private val scheduler = FakeSendScheduler()
+    private val playerPlaylists = FakePlayerPlaylists()
+
+    @Before
+    fun setUp() = Dispatchers.setMain(dispatcher)
+
+    @After
+    fun tearDown() {
+        dataStoreScope.cancel()
+        Dispatchers.resetMain()
+    }
+
+    private fun viewModel(builtInClientId: String = "built-in", spotifyApi: SpotifyApi = api, playedSongCount: suspend () -> Int = { 42 }): SpotifyViewModel {
+        val dataStore = PreferenceDataStoreFactory.create(scope = dataStoreScope) { File(folder.root, "settings.preferences_pb") }
+        val clientId = SpotifyClientId(dataStore, builtInClientId)
+        val fileSizes = object : FileSizes {
+            override suspend fun sizesByLocation() = mapOf(FileLocation("Music/", "1.mp3") to 5_000_000L)
+        }
+        return SpotifyViewModel(
+            session = SpotifySession(tokenStore, accounts, clientId::effective, clock),
+            tokenStore = tokenStore,
+            clientId = clientId,
+            api = spotifyApi,
+            matcher = SongMatcher(spotifyApi, dao, clock),
+            publisher = PlaylistPublisher(spotifyApi, dao),
+            playerPlaylists = playerPlaylists,
+            fileSizes = fileSizes,
+            store = store,
+            scheduler = scheduler,
+            playedSongCount = playedSongCount,
+            builtInClientId = builtInClientId,
+        )
+    }
+
+    private fun done(viewModel: SpotifyViewModel) = viewModel.state.value.stage as SpotifyStage.Done
+
+    @Test
+    fun signedInStateIsReadFromTheStoredTokens() = runTest(dispatcher) {
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        assertTrue(viewModel.state.value.isSignedIn)
+        assertEquals("Test User", viewModel.state.value.userName)
+    }
+
+    @Test
+    fun theHintSaysCreateUntilThatNameHasAPlaylist() = runTest(dispatcher) {
+        val viewModel = viewModel()
+        advanceUntilIdle()
+        assertEquals(false, viewModel.state.value.willUpdatePlaylist)
+
+        dao.playlists["test-user" to "top:play sift top 100"] = SpotifyPlaylistEntry("test-user", "top:play sift top 100", "p1", "url")
+        viewModel.setPlaylistName("Play Sift top 100 ")
+        advanceUntilIdle()
+        assertEquals(true, viewModel.state.value.willUpdatePlaylist)
+
+        viewModel.setTopCountText("200")
+        advanceUntilIdle()
+        assertEquals(false, viewModel.state.value.willUpdatePlaylist)
+
+        viewModel.setPlaylistName("Play Sift top 100")
+        advanceUntilIdle()
+        assertEquals(true, viewModel.state.value.willUpdatePlaylist)
+    }
+
+    @Test
+    fun missingClientIdBlocksSignIn() = runTest(dispatcher) {
+        tokenStore.stored = null
+        val viewModel = viewModel(builtInClientId = "")
+        advanceUntilIdle()
+        var openedUrl: String? = null
+
+        viewModel.signIn { openedUrl = it }
+        advanceUntilIdle()
+
+        assertEquals(false, viewModel.state.value.hasClientId)
+        assertEquals(null, openedUrl)
+    }
+
+    @Test
+    fun aTypedClientIdOverridesTheBuiltInOne() = runTest(dispatcher) {
+        tokenStore.stored = null
+        val viewModel = viewModel(builtInClientId = "")
+        advanceUntilIdle()
+        viewModel.setClientIdOverride("typed-id")
+        advanceUntilIdle()
+        var openedUrl: String? = null
+
+        viewModel.signIn { openedUrl = it }
+        advanceUntilIdle()
+
+        assertTrue(openedUrl!!.contains("client_id=typed-id"))
+    }
+
+    @Test
+    fun signInSavesAVerifierAndOpensThePageWithItsChallenge() = runTest(dispatcher) {
+        tokenStore.stored = null
+        val viewModel = viewModel()
+        advanceUntilIdle()
+        var openedUrl: String? = null
+
+        viewModel.signIn { openedUrl = it }
+        advanceUntilIdle()
+
+        val pending = tokenStore.pending!!
+        assertTrue(openedUrl!!.contains("code_challenge=${codeChallengeFor(pending.verifier)}"))
+        assertTrue(openedUrl!!.contains("state=${pending.state}"))
+    }
+
+    @Test
+    fun aCallbackWithTheWrongStateIsRefused() = runTest(dispatcher) {
+        tokenStore.stored = null
+        tokenStore.pending = PendingAuthorization("verifier", "expected-state")
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.onAuthCallback(code = "code", state = "other-state", error = null)
+        advanceUntilIdle()
+
+        assertEquals(false, viewModel.state.value.isSignedIn)
+        assertEquals(null, accounts.exchangedWith)
+        assertNotNull(viewModel.state.value.message)
+    }
+
+    @Test
+    fun aCallbackWithMatchingStateCompletesSignIn() = runTest(dispatcher) {
+        tokenStore.stored = null
+        tokenStore.pending = PendingAuthorization("verifier", "expected-state")
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.onAuthCallback(code = "code", state = "expected-state", error = null)
+        advanceUntilIdle()
+
+        assertTrue(viewModel.state.value.isSignedIn)
+        assertEquals(Triple("built-in", "code", "verifier"), accounts.exchangedWith)
+    }
+
+    @Test
+    fun aDeniedSignInShowsAMessage() = runTest(dispatcher) {
+        tokenStore.stored = null
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.onAuthCallback(code = null, state = "x", error = "access_denied")
+        advanceUntilIdle()
+
+        assertEquals(false, viewModel.state.value.isSignedIn)
+        assertNotNull(viewModel.state.value.message)
+    }
+
+    @Test
+    fun signOutForgetsTheTokens() = runTest(dispatcher) {
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.signOut()
+        advanceUntilIdle()
+
+        assertEquals(false, viewModel.state.value.isSignedIn)
+        assertEquals(null, tokenStore.stored)
+    }
+
+    private fun matchedSong(id: Long, title: String, confirmed: Boolean = false) =
+        MatchedSong(songTrack(id, title = title), "spotify:track:$title", confirmed)
+
+    private fun unsureSong(id: Long, title: String) = UnsureSong(songTrack(id, title = title), spotifyTrack(title, durationMillis = 90_000))
+
+    @Test
+    fun sendingHandsTheChosenSourceToTheBackgroundWork() = runTest(dispatcher) {
+        val viewModel = viewModel()
+        advanceUntilIdle()
+        viewModel.setTopCountText("25")
+        viewModel.setPlaylistName("Mine")
+
+        viewModel.send()
+        advanceUntilIdle()
+
+        assertEquals(listOf(sendRequest(SourceChoice.TopPlayed, topCount = 25, playlistName = "Mine")), scheduler.startedRequests)
+    }
+
+    private val gym = PlayerPlaylist(1, "Gym", 3)
+    private val empty = PlayerPlaylist(2, "Empty", 0)
+
+    @Test
+    fun choosingPlayerPlaylistsLoadsThemAndSendIsBlockedUntilASongfulOneIsPicked() = runTest(dispatcher) {
+        playerPlaylists.playlists = listOf(gym, empty)
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.chooseSource(SourceChoice.PlayerPlaylist)
+        advanceUntilIdle()
+
+        assertEquals(listOf(gym, empty), viewModel.state.value.playerPlaylists)
+        assertTrue(!viewModel.state.value.canSend)
+        viewModel.choosePlayerPlaylist(empty.id)
+        assertTrue(!viewModel.state.value.canSend)
+        viewModel.choosePlayerPlaylist(gym.id)
+        assertTrue(viewModel.state.value.canSend)
+    }
+
+    @Test
+    fun pickingAPlayerPlaylistFillsTheNameUnlessTheUserTypedOne() = runTest(dispatcher) {
+        playerPlaylists.playlists = listOf(gym, empty)
+        val viewModel = viewModel()
+        advanceUntilIdle()
+        viewModel.chooseSource(SourceChoice.PlayerPlaylist)
+        advanceUntilIdle()
+
+        viewModel.choosePlayerPlaylist(gym.id)
+        assertEquals("Gym", viewModel.state.value.playlistName)
+        viewModel.choosePlayerPlaylist(empty.id)
+        assertEquals("Empty", viewModel.state.value.playlistName)
+        viewModel.setPlaylistName("Mine")
+        viewModel.choosePlayerPlaylist(gym.id)
+
+        assertEquals("Mine", viewModel.state.value.playlistName)
+    }
+
+    @Test
+    fun aPlayerPlaylistSendCarriesTheChosenPlaylist() = runTest(dispatcher) {
+        playerPlaylists.playlists = listOf(gym)
+        val viewModel = viewModel()
+        advanceUntilIdle()
+        viewModel.chooseSource(SourceChoice.PlayerPlaylist)
+        advanceUntilIdle()
+        viewModel.choosePlayerPlaylist(gym.id)
+
+        viewModel.send()
+        advanceUntilIdle()
+
+        assertEquals(
+            listOf(sendRequest(SourceChoice.PlayerPlaylist, playlistName = "Gym", playerPlaylistId = 1, playerPlaylistName = "Gym")),
+            scheduler.startedRequests,
+        )
+    }
+
+    @Test
+    fun aPlayerPlaylistReadFailureShowsAMessageAndNoList() = runTest(dispatcher) {
+        playerPlaylists.failure = SecurityException("no data permission")
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.chooseSource(SourceChoice.PlayerPlaylist)
+        advanceUntilIdle()
+
+        assertNotNull(viewModel.state.value.playerPlaylistsError)
+        assertTrue(viewModel.state.value.playerPlaylists.isEmpty())
+        assertTrue(!viewModel.state.value.isLoadingPlayerPlaylists)
+    }
+
+    @Test
+    fun tickedSongsTravelWithTheRequest() = runTest(dispatcher) {
+        val viewModel = viewModel()
+        advanceUntilIdle()
+        val ticked = listOf(songTrack(9, title = "Picked"))
+
+        viewModel.useTickedSongs(ticked)
+        viewModel.send()
+        advanceUntilIdle()
+
+        assertEquals(ticked, scheduler.startedRequests.single().tickedTracks)
+    }
+
+    @Test
+    fun aSecondSendWhileOneRunsShowsAMessage() = runTest(dispatcher) {
+        scheduler.outcome = StartOutcome.AlreadyRunning
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.send()
+        advanceUntilIdle()
+
+        assertTrue(viewModel.state.value.message!!.contains("already running"))
+    }
+
+    @Test
+    fun theScreenShowsTheProgressOfTheBackgroundWork() = runTest(dispatcher) {
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        scheduler.workState.value = SendWorkState.Matching(340, 2412)
+        advanceUntilIdle()
+        assertEquals(SpotifyStage.Matching(340, 2412), viewModel.state.value.stage)
+
+        scheduler.workState.value = SendWorkState.Publishing
+        advanceUntilIdle()
+        assertEquals(SpotifyStage.Publishing, viewModel.state.value.stage)
+    }
+
+    @Test
+    fun cancellingAsksTheSchedulerToStop() = runTest(dispatcher) {
+        val viewModel = viewModel()
+
+        viewModel.cancelSend()
+
+        assertEquals(1, scheduler.cancelCount)
+    }
+
+    @Test
+    fun aSavedResultIsShownWhenTheScreenIsCreatedAgain() = runTest(dispatcher) {
+        store.save(savedSend(added = listOf(matchedSong(1, "One")), unsure = listOf(unsureSong(2, "Maybe")), notFound = listOf(songTrack(3))))
+
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        val result = done(viewModel)
+        assertEquals(listOf(1L), result.result.added.map { it.track.id })
+        assertEquals(listOf(2L), result.unsure.map { it.track.id })
+        assertEquals(listOf(3L), result.result.notFound.map { it.id })
+    }
+
+    @Test
+    fun aSavedFailureIsShownAsFailed() = runTest(dispatcher) {
+        store.save(failedSend(sendRequest(), "Spotify answered with an error (500). Try again in a minute."))
+
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        assertTrue((viewModel.state.value.stage as SpotifyStage.Failed).message.contains("500"))
+    }
+
+    @Test
+    fun theOfferHoldsOnlyMatchedSongsStartsUntickedAndSelectAllTicksEverything() = runTest(dispatcher) {
+        store.save(
+            savedSend(
+                added = listOf(matchedSong(1, "One"), matchedSong(2, "Two"), matchedSong(4, "Confirmed", confirmed = true)),
+                unsure = listOf(unsureSong(5, "Maybe")),
+                notFound = listOf(songTrack(3)),
+            ),
+        )
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        assertEquals(listOf(1L, 2L), done(viewModel).offer.map { it.track.id })
+        assertEquals(listOf(5_000_000L, null), done(viewModel).offer.map { it.sizeBytes })
+        assertTrue(done(viewModel).selectedIds.isEmpty())
+        viewModel.selectAllOffered()
+        assertEquals(setOf(1L, 2L), done(viewModel).selectedIds)
+        viewModel.toggleOffered(1)
+        assertEquals(setOf(2L), done(viewModel).selectedIds)
+        viewModel.clearOffered()
+        assertTrue(done(viewModel).selectedIds.isEmpty())
+    }
+
+    @Test
+    fun confirmingTheLastUnsureSongAddsItToTheSamePlaylistButIsNotOfferedForTheTrash() = runTest(dispatcher) {
+        store.save(savedSend(added = listOf(matchedSong(1, "Sure")), unsure = listOf(unsureSong(2, "Maybe"))))
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.confirmUnsure(2)
+        advanceUntilIdle()
+
+        assertEquals(listOf(1L, 2L), done(viewModel).result.added.map { it.track.id })
+        assertEquals(listOf(1L), done(viewModel).offer.map { it.track.id })
+        assertTrue(done(viewModel).unsure.isEmpty())
+        assertEquals(listOf("playlist-1" to listOf("spotify:track:Maybe")), api.addCalls)
+        assertTrue(api.replaceCalls.isEmpty())
+    }
+
+    @Test
+    fun skippingTheLastUnsureSongLeavesThePlaylistAlone() = runTest(dispatcher) {
+        store.save(savedSend(added = listOf(matchedSong(1, "Sure")), unsure = listOf(unsureSong(2, "Maybe"))))
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.skipUnsure(2)
+        advanceUntilIdle()
+
+        assertEquals(listOf(2L), done(viewModel).result.skippedUnsure.map { it.track.id })
+        assertEquals(listOf(1L), done(viewModel).result.added.map { it.track.id })
+        assertTrue(api.replaceCalls.isEmpty())
+    }
+
+    @Test
+    fun confirmingAnUnsureSongWhenNothingElseMatchedMakesThePlaylist() = runTest(dispatcher) {
+        store.save(savedSend(unsure = listOf(unsureSong(2, "Maybe")), playlist = null))
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.confirmUnsure(2)
+        advanceUntilIdle()
+
+        assertEquals(listOf("Play Sift picks"), api.createdNames)
+        assertEquals("playlist-1", done(viewModel).result.playlist!!.id)
+    }
+
+    @Test
+    fun skippingEveryUnsureSongWithNothingAddedEndsAsFailed() = runTest(dispatcher) {
+        store.save(savedSend(unsure = listOf(unsureSong(2, "Maybe")), playlist = null))
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.skipUnsure(2)
+        advanceUntilIdle()
+
+        assertTrue(viewModel.state.value.stage is SpotifyStage.Failed)
+    }
+
+    @Test
+    fun backToSetupForgetsTheSavedResult() = runTest(dispatcher) {
+        store.save(savedSend(added = listOf(matchedSong(1, "One"))))
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.backToSetup()
+        advanceUntilIdle()
+
+        assertEquals(SpotifyStage.Setup, viewModel.state.value.stage)
+    }
+
+    @Test
+    fun unsureSongsFromABackgroundRunAppearOnTheResultScreen() = runTest(dispatcher) {
+        api.catalogue = mapOf("Sure" to listOf(spotifyTrack("Sure")), "Maybe" to listOf(spotifyTrack("Maybe", durationMillis = 90_000)))
+        val runner = SendRunner(SongMatcher(api, dao, clock), PlaylistPublisher(api, dao), FakePlayerPlaylists()) { emptyList() }
+        val request = sendRequest(tickedTracks = listOf(songTrack(1, title = "Sure"), songTrack(2, title = "Maybe")))
+
+        store.save(runner.run(request, { _, _ -> }, {}))
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        assertEquals(listOf("Maybe"), done(viewModel).unsure.map { it.track.title })
+        assertEquals(listOf("Sure"), done(viewModel).result.added.map { it.track.title })
+    }
+
+    @Test
+    fun theTopCountCanBeEmptiedAndOnlyKeepsFourDigits() = runTest(dispatcher) {
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.setTopCountText("")
+        assertEquals("", viewModel.state.value.topCountText)
+        assertEquals(false, viewModel.state.value.canSend)
+        viewModel.setTopCountText("12a345")
+        assertEquals("1234", viewModel.state.value.topCountText)
+        assertEquals("Play Sift top 1234", viewModel.state.value.playlistName)
+    }
+
+    @Test
+    fun aZeroCountCannotBeSent() = runTest(dispatcher) {
+        val viewModel = viewModel()
+        advanceUntilIdle()
+        viewModel.setTopCountText("0")
+
+        viewModel.send()
+        advanceUntilIdle()
+
+        assertTrue(scheduler.startedRequests.isEmpty())
+    }
+
+    @Test
+    fun theAllChipUsesTheNumberOfPlayedSongs() = runTest(dispatcher) {
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.useAllPlayedCount()
+        advanceUntilIdle()
+
+        assertEquals("42", viewModel.state.value.topCountText)
+    }
+
+    private val lostSong = songTrack(3, title = "Lost", durationMillis = 100_000)
+    private val liveOption = spotifyTrack("Lost - Live", durationMillis = 172_000, album = "Live Album")
+    private val studioOption = spotifyTrack("Lost")
+
+    private suspend fun showPickerFor(track: PlayerTrack, saved: SavedSend, options: List<SpotifyTrack> = listOf(liveOption, studioOption)): SpotifyViewModel {
+        store.save(saved)
+        api.optionResults = mapOf(optionQueries(track).first() to options)
+        val viewModel = viewModel()
+        dispatcher.scheduler.advanceUntilIdle()
+        viewModel.openPicker(track)
+        dispatcher.scheduler.advanceUntilIdle()
+        return viewModel
+    }
+
+    @Test
+    fun openingThePickerLoadsTheOptions() = runTest(dispatcher) {
+        val viewModel = showPickerFor(lostSong, savedSend(added = listOf(matchedSong(1, "One")), notFound = listOf(lostSong)))
+
+        val picker = viewModel.state.value.picker!!
+        assertEquals(lostSong, picker.track)
+        assertEquals(listOf("Lost - Live", "Lost"), picker.options.map { it.title })
+        assertEquals(false, picker.isLoading)
+    }
+
+    @Test
+    fun pickingAnOptionAppendsToThePlaylistInsteadOfReplacingIt() = runTest(dispatcher) {
+        val viewModel = showPickerFor(lostSong, savedSend(added = listOf(matchedSong(1, "One")), notFound = listOf(lostSong, songTrack(4))))
+
+        viewModel.pickOption(liveOption)
+        advanceUntilIdle()
+
+        assertEquals(listOf("playlist-1" to listOf(liveOption.uri)), api.addCalls)
+        assertTrue(api.replaceCalls.isEmpty())
+        assertEquals(null, viewModel.state.value.picker)
+        assertEquals("Added to Play Sift picks", viewModel.state.value.confirmation)
+    }
+
+    @Test
+    fun aSongPickedByHandLeavesNotFoundIsMarkedAsAddedByHandAndNeverOfferedForTheTrash() = runTest(dispatcher) {
+        val viewModel = showPickerFor(lostSong, savedSend(added = listOf(matchedSong(1, "One")), notFound = listOf(lostSong, songTrack(4))))
+
+        viewModel.pickOption(liveOption)
+        advanceUntilIdle()
+
+        val result = done(viewModel).result
+        assertEquals(listOf(4L), result.notFound.map { it.id })
+        assertEquals(listOf(false, true), result.added.map { it.wasConfirmedByUser })
+        assertEquals(listOf(1L), done(viewModel).offer.map { it.track.id })
+        assertEquals(result, store.saved.first()!!.result)
+    }
+
+    @Test
+    fun thePickedOptionIsCachedForTheNextRun() = runTest(dispatcher) {
+        val viewModel = showPickerFor(lostSong, savedSend(notFound = listOf(lostSong)))
+
+        viewModel.pickOption(liveOption)
+        advanceUntilIdle()
+
+        val cached = dao.allMatches().single()
+        assertEquals(liveOption.uri, cached.spotifyUri)
+        assertTrue(cached.isConfirmedByUser)
+    }
+
+    @Test
+    fun pickingAnUnsureSongTakesItOffTheUnsureListAndAppends() = runTest(dispatcher) {
+        val unsure = UnsureSong(lostSong, spotifyTrack("Lost", durationMillis = 90_000))
+        val other = unsureSong(5, "Other")
+        val viewModel = showPickerFor(lostSong, savedSend(added = listOf(matchedSong(1, "One")), unsure = listOf(unsure, other)))
+
+        viewModel.pickOption(studioOption)
+        advanceUntilIdle()
+
+        assertEquals(listOf(5L), done(viewModel).unsure.map { it.track.id })
+        assertEquals(listOf("playlist-1" to listOf(studioOption.uri)), api.addCalls)
+        assertTrue(api.replaceCalls.isEmpty())
+    }
+
+    @Test
+    fun pickingForTheLastUnsureSongPublishesEarlierConfirmationsToo() = runTest(dispatcher) {
+        val unsure = UnsureSong(lostSong, spotifyTrack("Lost", durationMillis = 90_000))
+        val viewModel = showPickerFor(lostSong, savedSend(added = listOf(matchedSong(1, "One"), matchedSong(2, "Two", confirmed = true)), unsure = listOf(unsure)))
+
+        viewModel.pickOption(studioOption)
+        advanceUntilIdle()
+
+        assertEquals(listOf("spotify:track:One", "spotify:track:Two", studioOption.uri), api.replaceCalls.single().second)
+    }
+
+    @Test
+    fun pickingWhenNoPlaylistExistsYetMakesIt() = runTest(dispatcher) {
+        val unsure = UnsureSong(lostSong, spotifyTrack("Lost", durationMillis = 90_000))
+        val viewModel = showPickerFor(lostSong, savedSend(unsure = listOf(unsure, unsureSong(5, "Other")), playlist = null))
+
+        viewModel.pickOption(studioOption)
+        advanceUntilIdle()
+
+        assertEquals(listOf(studioOption.uri), api.replaceCalls.single().second)
+        assertEquals("playlist-1", done(viewModel).result.playlist!!.id)
+    }
+
+    @Test
+    fun closingThePickerLeavesTheSongWhereItWas() = runTest(dispatcher) {
+        val viewModel = showPickerFor(lostSong, savedSend(notFound = listOf(lostSong)))
+
+        viewModel.closePicker()
+        advanceUntilIdle()
+
+        assertEquals(null, viewModel.state.value.picker)
+        assertEquals(listOf(3L), done(viewModel).result.notFound.map { it.id })
+        assertTrue(api.addCalls.isEmpty())
+    }
+
+    @Test
+    fun aFailedSearchShowsAMessageInThePicker() = runTest(dispatcher) {
+        store.save(savedSend(notFound = listOf(lostSong)))
+        val viewModel = viewModel()
+        advanceUntilIdle()
+        api.failure = SpotifyHttpException(429, "slow down")
+
+        viewModel.openPicker(lostSong)
+        advanceUntilIdle()
+
+        val picker = viewModel.state.value.picker!!
+        assertEquals("Spotify is busy right now. Try again in a minute.", picker.errorMessage)
+        assertTrue(picker.options.isEmpty())
+    }
+
+    @Test
+    fun aRejectedTokenWhileAddingKeepsTheSongListedAndTheSheetOpen() = runTest(dispatcher) {
+        store.save(savedSend(added = listOf(matchedSong(1, "One")), notFound = listOf(lostSong)))
+        val rejectingApi = object : SpotifyApi by api {
+            override suspend fun addItems(playlistId: String, uris: List<String>) = throw SpotifyHttpException(401, "rejected")
+        }
+        val viewModel = viewModel(spotifyApi = rejectingApi)
+        advanceUntilIdle()
+        viewModel.openPicker(lostSong)
+        advanceUntilIdle()
+
+        viewModel.pickOption(liveOption)
+        advanceUntilIdle()
+
+        assertEquals(listOf(3L), done(viewModel).result.notFound.map { it.id })
+        assertTrue(viewModel.state.value.picker!!.errorMessage!!.startsWith("Spotify no longer accepts"))
+        assertTrue(dao.allMatches().isEmpty())
+    }
+
+    @Test
+    fun confirmingOneOfSeveralUnsureSongsAddsItToThePlaylistAtOnce() = runTest(dispatcher) {
+        store.save(savedSend(added = listOf(matchedSong(1, "Sure")), unsure = listOf(unsureSong(2, "Maybe"), unsureSong(3, "Perhaps"))))
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.confirmUnsure(2)
+        advanceUntilIdle()
+
+        assertEquals(listOf("playlist-1" to listOf("spotify:track:Maybe")), api.addCalls)
+        assertEquals(listOf(3L), done(viewModel).unsure.map { it.track.id })
+        viewModel.backToSetup()
+        advanceUntilIdle()
+        assertEquals(SpotifyStage.Setup, viewModel.state.value.stage)
+    }
+
+    @Test
+    fun aDecisionForASongThatIsNotOnScreenChangesNothing() = runTest(dispatcher) {
+        store.save(savedSend(unsure = listOf(unsureSong(2, "Maybe"), unsureSong(3, "Perhaps"))))
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.confirmUnsure(3)
+        viewModel.skipUnsure(3)
+        advanceUntilIdle()
+
+        assertEquals(listOf(2L, 3L), done(viewModel).unsure.map { it.track.id })
+        assertTrue(api.addCalls.isEmpty())
+        assertTrue(done(viewModel).result.added.isEmpty())
+    }
+
+    @Test
+    fun aSecondTapOnAddItNeverConfirmsTheNextSong() = runTest(dispatcher) {
+        store.save(savedSend(unsure = listOf(unsureSong(2, "Maybe"), unsureSong(3, "Perhaps"))))
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.confirmUnsure(2)
+        viewModel.confirmUnsure(2)
+        advanceUntilIdle()
+
+        assertEquals(listOf(2L), done(viewModel).result.added.map { it.track.id })
+        assertEquals(listOf(3L), done(viewModel).unsure.map { it.track.id })
+    }
+
+    @Test
+    fun theDecisionButtonsAreLockedWhileADecisionIsSaved() = runTest(dispatcher) {
+        store.save(savedSend(unsure = listOf(unsureSong(2, "Maybe"))))
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.skipUnsure(2)
+        assertTrue(viewModel.state.value.isDeciding)
+        advanceUntilIdle()
+
+        assertEquals(false, viewModel.state.value.isDeciding)
+    }
+
+    @Test
+    fun backToSetupWaitsForADecisionThatIsBeingPublished() = runTest(dispatcher) {
+        val gate = CompletableDeferred<Unit>()
+        val slowApi = object : FakeSpotifyApi() {
+            override suspend fun addItems(playlistId: String, uris: List<String>) {
+                gate.await()
+                super.addItems(playlistId, uris)
+            }
+        }
+        store.save(savedSend(unsure = listOf(unsureSong(2, "Maybe"), unsureSong(3, "Perhaps"))))
+        val viewModel = viewModel(spotifyApi = slowApi)
+        advanceUntilIdle()
+
+        viewModel.confirmUnsure(2)
+        advanceUntilIdle()
+        viewModel.backToSetup()
+        advanceUntilIdle()
+        gate.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(SpotifyStage.Setup, viewModel.state.value.stage)
+    }
+
+    @Test
+    fun aFailedPlayedCountLookupShowsAMessageAndKeepsTheCount() = runTest(dispatcher) {
+        val viewModel = viewModel(playedSongCount = { throw SecurityException("no access") })
+        advanceUntilIdle()
+        val before = viewModel.state.value.topCountText
+
+        viewModel.useAllPlayedCount()
+        advanceUntilIdle()
+
+        assertEquals(before, viewModel.state.value.topCountText)
+        assertNotNull(viewModel.state.value.message)
+    }
+}

@@ -1,0 +1,87 @@
+package app.playsift.spotify
+
+import android.app.Application
+import android.content.Context
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.work.WorkManager
+import app.playsift.BuildConfig
+import app.playsift.files.MediaStoreFileSizes
+import app.playsift.history.PlayHistoryDatabase
+import app.playsift.history.inObservationOrder
+import app.playsift.history.mergeHistory
+import app.playsift.history.roomPlayHistory
+import app.playsift.player.LibraryList
+import app.playsift.player.PlayerLibrary
+import app.playsift.player.PlayerPlaylistLibrary
+import app.playsift.player.PlayerPlaylists
+import app.playsift.player.PlayerTrack
+import app.playsift.settings.settingsDataStore
+import java.time.Clock
+import java.time.Period
+import okhttp3.OkHttpClient
+
+/** The Spotify pieces, shared by the screen's view model and the background worker so both use one token session. */
+class SpotifyComponents private constructor(private val context: Context) {
+    private val clock = Clock.systemUTC()
+    private val httpClient = OkHttpClient()
+    val clientId = SpotifyClientId(context.settingsDataStore, BuildConfig.SPOTIFY_CLIENT_ID)
+    val tokenStore = DataStoreTokenStore(context.settingsDataStore, KeystoreSecretCipher())
+    val session = SpotifySession(tokenStore, OkHttpSpotifyAccounts(httpClient, clock), clientId::effective, clock)
+    val api: SpotifyApi = OkHttpSpotifyApi(httpClient, session)
+    private val dao = PlayHistoryDatabase.open(context).spotifyDao()
+    val matcher = SongMatcher(api, dao, clock)
+    val publisher = PlaylistPublisher(api, dao)
+    val sendStore: SendStore = DataStoreSendStore(context.settingsDataStore)
+
+    /** One scheduler for the whole app, so its admission lock covers every caller. */
+    val sendScheduler: SendScheduler by lazy { WorkManagerSendScheduler(WorkManager.getInstance(context), sendStore) }
+
+    private val library by lazy { PlayerLibrary(context.contentResolver) }
+    val playerPlaylists: PlayerPlaylists by lazy { PlayerPlaylistLibrary(context.contentResolver) }
+    private val history by lazy { roomPlayHistory(context) }
+
+    suspend fun loadMergedTracks(): List<PlayerTrack> {
+        val (playerTracks, entries) = inObservationOrder {
+            val playerTracks = library.tracks(LibraryList.AllTracks, Period.ZERO, clock.instant())
+            playerTracks to history.record(playerTracks)
+        }
+        return mergeHistory(playerTracks, entries)
+    }
+
+    suspend fun playedSongCount(): Int = loadMergedTracks().count { it.playCount > 0 }
+
+    val sendServices: SendServices by lazy {
+        val runner = SendRunner(matcher, publisher, playerPlaylists, ::loadMergedTracks)
+        SendServices(runner, sendStore, SendNotifications(context))
+    }
+
+    companion object {
+        @Volatile
+        private var instance: SpotifyComponents? = null
+
+        fun of(context: Context): SpotifyComponents =
+            instance ?: synchronized(this) { instance ?: SpotifyComponents(context.applicationContext).also { instance = it } }
+    }
+}
+
+fun spotifyViewModelFactory(application: Application): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
+    @Suppress("UNCHECKED_CAST")
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        val components = SpotifyComponents.of(application)
+        return SpotifyViewModel(
+            session = components.session,
+            tokenStore = components.tokenStore,
+            clientId = components.clientId,
+            api = components.api,
+            matcher = components.matcher,
+            publisher = components.publisher,
+            playerPlaylists = components.playerPlaylists,
+            fileSizes = MediaStoreFileSizes(application.contentResolver),
+            store = components.sendStore,
+            scheduler = components.sendScheduler,
+            playedSongCount = components::playedSongCount,
+            builtInClientId = BuildConfig.SPOTIFY_CLIENT_ID,
+        ) as T
+    }
+}

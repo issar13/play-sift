@@ -1,0 +1,90 @@
+package app.playsift.spotify
+
+import app.playsift.player.PlayerPlaylist
+import app.playsift.player.PlayerTrack
+
+enum class SourceChoice { TopPlayed, EverythingPlayed, TickedSongs, PlayerPlaylist }
+
+/** A song that is now on Spotify and could be moved to the trash; [sizeBytes] is null when the file size is unknown. */
+data class OfferedSong(val track: PlayerTrack, val sizeBytes: Long?)
+
+sealed interface SpotifyStage {
+    data object Setup : SpotifyStage
+
+    data class Matching(val done: Int, val total: Int) : SpotifyStage
+
+    data object Publishing : SpotifyStage
+
+    /** [unsure] songs wait for the user: the first is on screen, and adding them later updates the same playlist. */
+    data class Done(
+        val result: SendResult,
+        val unsure: List<UnsureSong>,
+        val offer: List<OfferedSong>,
+        val selectedIds: Set<Long>,
+    ) : SpotifyStage
+
+    data class Failed(val message: String) : SpotifyStage
+}
+
+/** The "pick from options" sheet for [track]: loading, then [options] or an [errorMessage]. */
+data class PickerState(
+    val track: PlayerTrack,
+    val options: List<SpotifyTrack> = emptyList(),
+    val isLoading: Boolean = true,
+    val errorMessage: String? = null,
+)
+
+data class SpotifyUiState(
+    val builtInClientIdMissing: Boolean,
+    val clientIdOverride: String,
+    val isSignedIn: Boolean,
+    val userName: String?,
+    val choice: SourceChoice,
+    /** What the user typed for how many top songs; empty while editing, so it is parsed only when sending. */
+    val topCountText: String,
+    val playlistName: String,
+    val tickedTracks: List<PlayerTrack>,
+    val stage: SpotifyStage,
+    val message: String? = null,
+    /** A short good-news line, such as "Added to Play Sift top 200". */
+    val confirmation: String? = null,
+    val picker: PickerState? = null,
+    /** True when sending now would update an existing playlist, false when it would create a new one. */
+    val willUpdatePlaylist: Boolean = false,
+    /** True while an unsure song's yes or skip is being saved, so the buttons cannot act on a second song. */
+    val isDeciding: Boolean = false,
+    /** The music player's playlists, loaded when the user picks that source. */
+    val playerPlaylists: List<PlayerPlaylist> = emptyList(),
+    val selectedPlayerPlaylistId: Long? = null,
+    val isLoadingPlayerPlaylists: Boolean = false,
+    val playerPlaylistsError: String? = null,
+) {
+    val hasClientId: Boolean get() = !builtInClientIdMissing || clientIdOverride.isNotBlank()
+
+    /** The typed count when it is a number above zero. */
+    val topCount: Int? get() = topCountText.toIntOrNull()?.takeIf { it > 0 }
+
+    val selectedPlayerPlaylist: PlayerPlaylist? get() = playerPlaylists.firstOrNull { it.id == selectedPlayerPlaylistId }
+
+    /** The source the current choice stands for; null while the player playlist source has no playlist picked. */
+    val source: SendSource?
+        get() = when (choice) {
+            SourceChoice.PlayerPlaylist -> selectedPlayerPlaylist?.let { SendSource.PlayerPlaylist(it.id, it.name) }
+            else -> sourceFor(choice, topCount ?: DEFAULT_TOP_COUNT)
+        }
+
+    val canSend: Boolean
+        get() = when (choice) {
+            SourceChoice.TopPlayed -> topCount != null
+            SourceChoice.PlayerPlaylist -> (selectedPlayerPlaylist?.songCount ?: 0) > 0
+            else -> true
+        }
+}
+
+const val DEFAULT_TOP_COUNT = 100
+
+const val MAX_TOP_COUNT_DIGITS = 4
+const val MAX_TOP_COUNT = 9999
+
+/** Keeps digits only, at most [MAX_TOP_COUNT_DIGITS] of them. */
+fun topCountTextFrom(input: String): String = input.filter(Char::isDigit).take(MAX_TOP_COUNT_DIGITS)
