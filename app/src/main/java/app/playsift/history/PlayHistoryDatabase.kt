@@ -24,9 +24,18 @@ abstract class PlayHistoryDatabase : RoomDatabase() {
     companion object {
         const val FILE_NAME = "play_history.db"
 
-        /** Truncate journaling keeps everything in the one file that Android auto backup copies. */
+        @Volatile
+        private var instance: PlayHistoryDatabase? = null
+
+        /** One shared instance per process, so the screen and the background worker never open the file twice. */
         fun open(context: Context): PlayHistoryDatabase =
-            Room.databaseBuilder(context.applicationContext, PlayHistoryDatabase::class.java, FILE_NAME)
+            instance ?: synchronized(this) {
+                instance ?: build(context.applicationContext).also { instance = it }
+            }
+
+        /** Truncate journaling keeps everything in the one file that Android auto backup copies. */
+        private fun build(applicationContext: Context): PlayHistoryDatabase =
+            Room.databaseBuilder(applicationContext, PlayHistoryDatabase::class.java, FILE_NAME)
                 .setJournalMode(JournalMode.TRUNCATE)
                 .build()
     }

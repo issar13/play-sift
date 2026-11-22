@@ -11,6 +11,12 @@ import app.playsift.files.MediaStoreFileSizes
 import app.playsift.files.TrackFile
 import app.playsift.files.TrackFileMatcher
 import app.playsift.files.trashBatches
+import app.playsift.history.PlayHistory
+import app.playsift.history.PlayHistoryDatabase
+import app.playsift.history.RoomPlayHistory
+import app.playsift.history.historySummary
+import app.playsift.history.mergeHistory
+import app.playsift.history.tracksFor
 import app.playsift.player.Access
 import app.playsift.player.AccessState
 import app.playsift.player.HistoryHealth
@@ -37,6 +43,7 @@ import kotlinx.coroutines.launch
 
 class LibraryViewModel(
     private val library: Library,
+    private val history: PlayHistory,
     private val access: Access,
     private val matcher: FileMatcher,
     private val fileSizes: FileSizes,
@@ -223,7 +230,10 @@ class LibraryViewModel(
                 return
             }
             val now = clock.instant()
-            val summary = library.historySummary()
+            val playerTracks = library.tracks(LibraryList.AllTracks, current.cutoff.period, now)
+            val entries = history.record(playerTracks)
+            val allTracks = mergeHistory(playerTracks, entries)
+            val summary = historySummary(allTracks, entries)
             val health = historyHealth(
                 earliestFirstSeenAt = summary.earliestFirstSeenAt,
                 totalTracks = summary.totalTracks,
@@ -231,7 +241,7 @@ class LibraryViewModel(
                 cutoff = current.cutoff.period,
                 now = now,
             )
-            val content = loadScreenContent(current, summary, now)
+            val content = loadScreenContent(current, summary, allTracks, now)
             mutableState.update {
                 it.copy(
                     access = accessState,
@@ -262,16 +272,16 @@ class LibraryViewModel(
         val sizesUnavailable: Boolean = false,
     )
 
-    private suspend fun loadScreenContent(current: LibraryUiState, summary: HistorySummary, now: Instant): ScreenContent {
+    private suspend fun loadScreenContent(current: LibraryUiState, summary: HistorySummary, allTracks: List<PlayerTrack>, now: Instant): ScreenContent {
         val period = current.cutoff.period
         return when (current.screen) {
             Screen.Home -> ScreenContent(
                 tracks = emptyList(),
                 home = homeSummary(
                     history = summary,
-                    mostPlayed = library.tracks(LibraryList.MostPlayed, period, now),
-                    deleteCandidates = library.tracks(LibraryList.DeleteCandidates, period, now),
-                    allTracks = library.tracks(LibraryList.AllTracks, period, now),
+                    mostPlayed = tracksFor(LibraryList.MostPlayed, allTracks, period, now),
+                    deleteCandidates = tracksFor(LibraryList.DeleteCandidates, allTracks, period, now),
+                    allTracks = allTracks,
                     sizes = sizesOrNull(current.hasFileAccess),
                 ),
                 sizesById = emptyMap(),
@@ -279,7 +289,7 @@ class LibraryViewModel(
             // Sizes and tracks come from two providers, so the large songs are filtered here instead of in SQL.
             Screen.Large -> {
                 val sizes = sizesOrNull(current.hasFileAccess)
-                val largeSongList = largeSongs(library.tracks(LibraryList.AllTracks, period, now), sizes.orEmpty())
+                val largeSongList = largeSongs(allTracks, sizes.orEmpty())
                 ScreenContent(
                     tracks = largeSongList.map { (track, _) -> track },
                     home = null,
@@ -288,9 +298,9 @@ class LibraryViewModel(
                 )
             }
             Screen.Settings -> ScreenContent(emptyList(), null, emptyMap())
-            Screen.MostPlayed -> listContent(LibraryList.MostPlayed, period, now)
-            Screen.NeverPlayed -> listContent(LibraryList.NeverPlayed, period, now)
-            Screen.Delete -> listContent(LibraryList.DeleteCandidates, period, now)
+            Screen.MostPlayed -> listContent(LibraryList.MostPlayed, allTracks, period, now)
+            Screen.NeverPlayed -> listContent(LibraryList.NeverPlayed, allTracks, period, now)
+            Screen.Delete -> listContent(LibraryList.DeleteCandidates, allTracks, period, now)
         }
     }
 
@@ -308,8 +318,8 @@ class LibraryViewModel(
             }
         }
 
-    private suspend fun listContent(list: LibraryList, period: Period, now: Instant) =
-        ScreenContent(library.tracks(list, period, now), null, emptyMap())
+    private fun listContent(list: LibraryList, allTracks: List<PlayerTrack>, period: Period, now: Instant) =
+        ScreenContent(tracksFor(list, allTracks, period, now), null, emptyMap())
 
     private fun Screen.libraryList(): LibraryList? =
         when (this) {
@@ -328,6 +338,7 @@ class LibraryViewModel(
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T = LibraryViewModel(
                 library = PlayerLibrary(application.contentResolver),
+                history = RoomPlayHistory(PlayHistoryDatabase.open(application).playHistoryDao(), Clock.systemUTC()),
                 access = PlayerAccess(application),
                 matcher = TrackFileMatcher(application.contentResolver),
                 fileSizes = MediaStoreFileSizes(application.contentResolver),

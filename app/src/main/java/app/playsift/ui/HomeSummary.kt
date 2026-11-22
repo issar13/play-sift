@@ -22,7 +22,7 @@ data class HomeSummary(
     val largeSongsSizeBytes: Long?,
     val mostPlayed: PlayerTrack?,
     val topArtist: ArtistPlays?,
-    val historySince: Instant?,
+    val trackingSince: Instant?,
 )
 
 /** [sizes] is null when the phone files are not readable, which hides every size. */
@@ -45,7 +45,7 @@ fun homeSummary(
         largeSongsSizeBytes = largeSongList?.sumOf { (_, sizeBytes) -> sizeBytes },
         mostPlayed = mostPlayed.firstOrNull(),
         topArtist = topArtist(mostPlayed),
-        historySince = history.earliestFirstSeenAt,
+        trackingSince = history.earliestFirstSeenAt,
     )
 }
 

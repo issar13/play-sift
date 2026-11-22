@@ -13,7 +13,9 @@ import app.playsift.files.TrackFile
 import app.playsift.player.Access
 import app.playsift.player.AccessState
 import app.playsift.player.HistoryHealth
-import app.playsift.player.HistorySummary
+import app.playsift.history.PlayHistory
+import app.playsift.history.PlayHistoryEntry
+import app.playsift.history.snapshotHistory
 import app.playsift.player.Library
 import app.playsift.player.LibraryList
 import app.playsift.player.PlayerTrack
@@ -58,11 +60,7 @@ private fun track(id: Long) = PlayerTrack(
     firstSeenAt = Instant.parse("2020-01-01T00:00:00Z"), durationMillis = 1000,
 )
 
-private class FakeLibrary(
-    var tracks: List<PlayerTrack>,
-    var summary: HistorySummary,
-    var tracksByList: Map<LibraryList, List<PlayerTrack>> = emptyMap(),
-) : Library {
+private class FakeLibrary(var tracks: List<PlayerTrack>) : Library {
     var trackQueries = 0
     var failure: Throwable? = null
     var gate: CompletableDeferred<Unit>? = null
@@ -70,10 +68,14 @@ private class FakeLibrary(
         trackQueries += 1
         gate?.await()
         failure?.let { throw it }
-        return tracksByList[list] ?: tracks
+        return tracks
     }
+}
 
-    override suspend fun historySummary(): HistorySummary = summary
+/** Runs the real snapshot rules against an in-memory list of stored rows. */
+private class FakePlayHistory(var stored: List<PlayHistoryEntry> = emptyList()) : PlayHistory {
+    override suspend fun record(playerTracks: List<PlayerTrack>): List<PlayHistoryEntry> =
+        snapshotHistory(stored, playerTracks, now).entries.also { stored = it }
 }
 
 private class FakeFileSizes(var sizes: Map<FileLocation, Long> = emptyMap()) : FileSizes {
@@ -132,7 +134,6 @@ class LibraryViewModelTest {
     @get:Rule val temporaryFolder = TemporaryFolder()
     private val dispatcher = StandardTestDispatcher()
     private val clock = Clock.fixed(now, ZoneOffset.UTC)
-    private val healthySummary = HistorySummary(Instant.parse("2020-01-01T00:00:00Z"), totalTracks = 100, unplayedTracks = 10)
     private lateinit var settingsScope: CoroutineScope
     private lateinit var settings: CutoffSettings
 
@@ -152,16 +153,17 @@ class LibraryViewModelTest {
     }
 
     private fun viewModel(
-        library: FakeLibrary = FakeLibrary((1L..3L).map(::track), healthySummary),
+        library: FakeLibrary = FakeLibrary((1L..3L).map(::track)),
+        history: FakePlayHistory = FakePlayHistory(),
         access: FakeAccess = FakeAccess(AccessState.Ready),
         matcher: FakeMatcher = FakeMatcher(),
         fileSizes: FakeFileSizes = FakeFileSizes(),
         startScreen: Screen = Screen.Delete,
-    ) = LibraryViewModel(library, access, matcher, fileSizes, settings, clock).also { it.showScreen(startScreen) }
+    ) = LibraryViewModel(library, history, access, matcher, fileSizes, settings, clock).also { it.showScreen(startScreen) }
 
     @Test
     fun startsOnAccessScreenWhenPermissionMissing() = runTest(dispatcher) {
-        val library = FakeLibrary((1L..3L).map(::track), healthySummary)
+        val library = FakeLibrary((1L..3L).map(::track))
         val viewModel = viewModel(library = library, access = FakeAccess(AccessState.NeedsPermission))
         advanceUntilIdle()
         assertEquals(AccessState.NeedsPermission, viewModel.state.value.access)
@@ -233,7 +235,7 @@ class LibraryViewModelTest {
 
     @Test
     fun batchesAdvanceInOrderAndFinishWithSummary() = runTest(dispatcher) {
-        val viewModel = viewModel(library = FakeLibrary((1L..1000L).map(::track), healthySummary))
+        val viewModel = viewModel(library = FakeLibrary((1L..1000L).map(::track)))
         confirmedFlow(viewModel, 1000)
         viewModel.confirmTrash()
         val first = viewModel.trashFlow.value as TrashFlow.InProgress
@@ -248,7 +250,7 @@ class LibraryViewModelTest {
 
     @Test
     fun confirmTwiceStartsOnlyOneFlow() = runTest(dispatcher) {
-        val viewModel = viewModel(library = FakeLibrary((1L..1000L).map(::track), healthySummary))
+        val viewModel = viewModel(library = FakeLibrary((1L..1000L).map(::track)))
         confirmedFlow(viewModel, 1000)
         viewModel.confirmTrash()
         viewModel.confirmTrash()
@@ -292,7 +294,7 @@ class LibraryViewModelTest {
 
     @Test
     fun finishReturnsToIdleAndRefreshes() = runTest(dispatcher) {
-        val library = FakeLibrary((1L..3L).map(::track), healthySummary)
+        val library = FakeLibrary((1L..3L).map(::track))
         val viewModel = viewModel(library = library)
         confirmedFlow(viewModel, 3)
         viewModel.confirmTrash()
@@ -306,7 +308,7 @@ class LibraryViewModelTest {
 
     @Test
     fun showsMostlyUnplayedBanner() = runTest(dispatcher) {
-        val library = FakeLibrary((1L..3L).map(::track), HistorySummary(Instant.parse("2020-01-01T00:00:00Z"), 100, 98))
+        val library = FakeLibrary((1L..3L).map(::track))
         val viewModel = viewModel(library = library)
         advanceUntilIdle()
         assertEquals(HistoryHealth.MostlyUnplayed, viewModel.state.value.historyHealth)
@@ -314,7 +316,7 @@ class LibraryViewModelTest {
 
     @Test
     fun securityExceptionDuringLoadShowsAccessScreen() = runTest(dispatcher) {
-        val library = FakeLibrary((1L..3L).map(::track), healthySummary)
+        val library = FakeLibrary((1L..3L).map(::track))
         val viewModel = viewModel(library = library)
         advanceUntilIdle()
         library.failure = SecurityException("revoked")
@@ -327,7 +329,7 @@ class LibraryViewModelTest {
 
     @Test
     fun otherLoadFailureSetsLoadFailed() = runTest(dispatcher) {
-        val library = FakeLibrary((1L..3L).map(::track), healthySummary)
+        val library = FakeLibrary((1L..3L).map(::track))
         val viewModel = viewModel(library = library)
         advanceUntilIdle()
         library.failure = IllegalStateException("null cursor")
@@ -340,7 +342,7 @@ class LibraryViewModelTest {
 
     @Test
     fun selectionMadeDuringLoadIsClearedWhenResultsArrive() = runTest(dispatcher) {
-        val library = FakeLibrary((1L..3L).map(::track), healthySummary)
+        val library = FakeLibrary((1L..3L).map(::track))
         val viewModel = viewModel(library = library)
         advanceUntilIdle()
         val gate = CompletableDeferred<Unit>()
@@ -397,7 +399,7 @@ class LibraryViewModelTest {
 
     @Test
     fun selectingCurrentTabKeepsSelection() = runTest(dispatcher) {
-        val library = FakeLibrary((1L..3L).map(::track), healthySummary)
+        val library = FakeLibrary((1L..3L).map(::track))
         val viewModel = viewModel(library = library)
         advanceUntilIdle()
         viewModel.toggleSelected(1)
@@ -450,14 +452,7 @@ class LibraryViewModelTest {
 
     @Test
     fun fileSharedWithUnselectedTrackOutsideTheListIsNotRemovable() = runTest(dispatcher) {
-        val libraryWithHiddenOwner = FakeLibrary(
-            tracks = emptyList(),
-            summary = healthySummary,
-            tracksByList = mapOf(
-                LibraryList.DeleteCandidates to listOf(track(1)),
-                LibraryList.AllTracks to listOf(track(1), track(2), track(9).copy(fileName = "1.mp3")),
-            ),
-        )
+        val libraryWithHiddenOwner = FakeLibrary(listOf(track(1), track(2), track(9).copy(fileName = "1.mp3")))
         val viewModel = viewModel(library = libraryWithHiddenOwner)
         advanceUntilIdle()
         viewModel.toggleSelected(1)
@@ -488,7 +483,7 @@ class LibraryViewModelTest {
             override suspend fun updateData(transform: suspend (Preferences) -> Preferences): Preferences =
                 throw IOException("disk full")
         }
-        val viewModel = LibraryViewModel(FakeLibrary((1L..3L).map(::track), healthySummary), FakeAccess(AccessState.Ready), FakeMatcher(), FakeFileSizes(), CutoffSettings(failingDataStore), clock)
+        val viewModel = LibraryViewModel(FakeLibrary((1L..3L).map(::track)), FakePlayHistory(), FakeAccess(AccessState.Ready), FakeMatcher(), FakeFileSizes(), CutoffSettings(failingDataStore), clock)
         advanceUntilIdle()
         viewModel.setCutoff(CutoffOption.SixMonths)
         advanceUntilIdle()
@@ -509,13 +504,7 @@ class LibraryViewModelTest {
     private fun largeTrack(id: Long, fileName: String) = track(id).copy(fileName = fileName)
 
     private val largeLibrary = FakeLibrary(
-        tracks = emptyList(),
-        summary = healthySummary,
-        tracksByList = mapOf(
-            LibraryList.AllTracks to listOf(largeTrack(1, "small.mp3"), largeTrack(2, "big.mp3"), largeTrack(3, "huge.mp3")),
-            LibraryList.MostPlayed to listOf(track(2).copy(artist = "Star", playCount = 5)),
-            LibraryList.DeleteCandidates to listOf(largeTrack(1, "small.mp3")),
-        ),
+        listOf(largeTrack(1, "small.mp3"), largeTrack(2, "big.mp3").copy(artist = "Star", playCount = 5), largeTrack(3, "huge.mp3")),
     )
     private val largeSizes = mapOf(
         FileLocation("Music/", "small.mp3") to 1_000L,
@@ -528,13 +517,33 @@ class LibraryViewModelTest {
         val viewModel = viewModel(library = largeLibrary, startScreen = Screen.Home)
         advanceUntilIdle()
         assertEquals(Screen.Home, viewModel.state.value.screen)
-        assertEquals(100, viewModel.state.value.home?.totalSongs)
-        assertEquals(1, viewModel.state.value.home?.deleteCandidates)
+        assertEquals(3, viewModel.state.value.home?.totalSongs)
+        assertEquals(2, viewModel.state.value.home?.deleteCandidates)
+    }
+
+    @Test
+    fun homeUsesTotalPlaysAndTrackingSince() = runTest(dispatcher) {
+        val storedFirstSeen = Instant.parse("2015-03-01T00:00:00Z")
+        val history = FakePlayHistory(
+            listOf(
+                PlayHistoryEntry(
+                    folderPath = "primary/Music/", fileName = "1.mp3", title = "t1", artist = "a", album = "b",
+                    lastSeenPlayerCount = 0, carriedPlays = 30, firstSeenAt = storedFirstSeen, lastPlayedAt = null, updatedAt = now,
+                ),
+            ),
+        )
+        val viewModel = viewModel(library = FakeLibrary((1L..3L).map(::track)), history = history, startScreen = Screen.Home)
+        advanceUntilIdle()
+        val home = viewModel.state.value.home!!
+        assertEquals(30, home.mostPlayed?.playCount)
+        assertEquals(storedFirstSeen, home.trackingSince)
+        assertEquals(1, home.playedSongs)
+        assertEquals(2, home.deleteCandidates)
     }
 
     @Test
     fun initialScreenIsHome() = runTest(dispatcher) {
-        val viewModel = LibraryViewModel(largeLibrary, FakeAccess(AccessState.Ready), FakeMatcher(), FakeFileSizes(), settings, clock)
+        val viewModel = LibraryViewModel(largeLibrary, FakePlayHistory(), FakeAccess(AccessState.Ready), FakeMatcher(), FakeFileSizes(), settings, clock)
         assertEquals(Screen.Home, viewModel.state.value.screen)
     }
 
@@ -604,8 +613,8 @@ class LibraryViewModelTest {
         advanceUntilIdle()
         assertEquals(false, viewModel.state.value.loadFailed)
         assertEquals(AccessState.Ready, viewModel.state.value.access)
-        assertEquals(100, viewModel.state.value.home?.totalSongs)
-        assertEquals(1, viewModel.state.value.home?.deleteCandidates)
+        assertEquals(3, viewModel.state.value.home?.totalSongs)
+        assertEquals(2, viewModel.state.value.home?.deleteCandidates)
         assertEquals(null, viewModel.state.value.home?.librarySizeBytes)
     }
 

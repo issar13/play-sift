@@ -202,13 +202,4 @@ class PlayerLibraryTest {
         assertEquals((1..folderCount).map { "primary/Many/$it/" }.toSet(), tracks.map { it.folderPath }.toSet())
         assertTrue(FakePlayerProvider.folderQueryCount > 1)
     }
-
-    @Test
-    fun historySummaryCountsFromProvider() = runTest {
-        val summary = library.historySummary()
-
-        assertEquals(Instant.ofEpochSecond(1_672_531_200L), summary.earliestFirstSeenAt)
-        assertEquals(4, summary.totalTracks)
-        assertEquals(3, summary.unplayedTracks)
-    }
 }

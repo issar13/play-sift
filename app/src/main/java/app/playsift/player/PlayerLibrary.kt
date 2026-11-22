@@ -11,8 +11,6 @@ data class HistorySummary(val earliestFirstSeenAt: Instant?, val totalTracks: In
 
 interface Library {
     suspend fun tracks(list: LibraryList, cutoff: Period, now: Instant): List<PlayerTrack>
-
-    suspend fun historySummary(): HistorySummary
 }
 
 class PlayerLibrary(private val contentResolver: ContentResolver) : Library {
@@ -49,25 +47,6 @@ class PlayerLibrary(private val contentResolver: ContentResolver) : Library {
                 )
             }
         }
-
-    /** Earliest `created_at`, total and never-played counts, all computed by the provider. */
-    override suspend fun historySummary(): HistorySummary =
-        withContext(Dispatchers.IO) {
-            val earliestUri = PlayerContract.FILES_URI.buildUpon().appendQueryParameter("lim", "1").build()
-            val earliestFirstSeenAt = contentResolver
-                .query(earliestUri, arrayOf(PlayerContract.Columns.CREATED_AT), null, null, "${PlayerContract.Columns.CREATED_AT} ASC")!!
-                .use { cursor -> cursor.readRows { Instant.ofEpochSecond(cursor.getLong(0)) }.firstOrNull() }
-            HistorySummary(
-                earliestFirstSeenAt = earliestFirstSeenAt,
-                totalTracks = rowCount(selection = null),
-                unplayedTracks = rowCount(selection = "${PlayerContract.Columns.TOTAL_PLAYED_TIMES} = 0"),
-            )
-        }
-
-    private fun rowCount(selection: String?): Int =
-        contentResolver
-            .query(PlayerContract.FILES_URI, arrayOf(PlayerContract.Columns.ID), selection, null, null)!!
-            .use { cursor -> cursor.count }
 
     /** Chunked so each query stays under SQLite's bind-variable limit (999 on older builds). */
     private fun foldersById(folderIds: List<Long>): Map<Long, FolderRow> =

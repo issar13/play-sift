@@ -40,7 +40,7 @@ class HomeSummaryTest {
         assertEquals(2, summary.largeSongs)
         assertEquals(13_000_000L, summary.largeSongsSizeBytes)
         assertEquals(1L, summary.mostPlayed?.id)
-        assertEquals(earliest, summary.historySince)
+        assertEquals(earliest, summary.trackingSince)
     }
 
     @Test

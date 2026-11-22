@@ -57,7 +57,7 @@ class HomeScreenTest {
         largeSongsSizeBytes = 21_500_000,
         mostPlayed = track,
         topArtist = ArtistPlays("New Order", 15),
-        historySince = Instant.parse("2024-01-01T00:00:00Z"),
+        trackingSince = Instant.parse("2024-01-01T00:00:00Z"),
     )
 
     private fun state(

@@ -149,8 +149,8 @@ private fun Highlights(summary: HomeSummary) {
         summary.topArtist?.let { artistPlays ->
             Text("Top artist: ${artistPlays.artist} (${pluralPlays(artistPlays.plays)})")
         }
-        summary.historySince?.let { historySince ->
-            Text("History since ${historyDateFormat.format(historySince)}")
+        summary.trackingSince?.let { trackingSince ->
+            Text("Tracking since ${historyDateFormat.format(trackingSince)}")
         }
     }
 }
