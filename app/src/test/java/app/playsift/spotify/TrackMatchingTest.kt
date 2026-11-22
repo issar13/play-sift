@@ -149,4 +149,39 @@ class TrackMatchingTest {
 
         assertEquals(MatchResult.Matched::class, matchTrack(explicit, listOf(candidate(title = "Song")))::class)
     }
+
+    @Test
+    fun differentRemixesOfTheSameSongAreOnlyUnsure() {
+        val clubRemix = songTrack(3, title = "Song (Club Remix)", artist = "New Order", durationMillis = 450_000)
+
+        val result = matchTrack(clubRemix, listOf(candidate(title = "Song (Radio Remix)")))
+
+        assertEquals(MatchResult.Unsure::class, result::class)
+    }
+
+    @Test
+    fun theSameRemixOnBothSidesStillMatches() {
+        val clubRemix = songTrack(3, title = "Song (Club Remix)", artist = "New Order", durationMillis = 450_000)
+
+        val result = matchTrack(clubRemix, listOf(candidate(title = "Song [Club Remix]")))
+
+        assertEquals(MatchResult.Matched::class, result::class)
+    }
+
+    @Test
+    fun anyOtherBracketedDescriptionOnOneSideOnlyIsUnsure() {
+        val withNote = songTrack(3, title = "Song (Radio Mix)", artist = "New Order", durationMillis = 450_000)
+
+        assertEquals(MatchResult.Unsure::class, matchTrack(withNote, listOf(candidate(title = "Song")))::class)
+        assertEquals(MatchResult.Unsure::class, matchTrack(songTrack(4, title = "Song", artist = "New Order", durationMillis = 450_000), listOf(candidate(title = "Song (Stripped Back)")))::class)
+    }
+
+    @Test
+    fun remasterYearAndFeaturedArtistNotesAreIgnoredOnBothSides() {
+        val local = songTrack(3, title = "Song (feat. A) [2011 Remaster]", artist = "New Order", durationMillis = 450_000)
+
+        val result = matchTrack(local, listOf(candidate(title = "Song (Remastered 2015)")))
+
+        assertEquals(MatchResult.Matched::class, result::class)
+    }
 }
