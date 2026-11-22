@@ -44,6 +44,9 @@ interface SpotifyApi {
 
     suspend fun currentUserName(): String
 
+    /** Spotify's id for the signed-in account. */
+    suspend fun currentUserId(): String
+
     suspend fun createPlaylist(name: String): SpotifyPlaylist
 
     /** Replaces everything in the playlist with [uris], which must hold at most [PLAYLIST_BATCH_SIZE] items. */
@@ -114,6 +117,9 @@ class OkHttpSpotifyApi(
 ) : SpotifyApi {
     private val json = Json { ignoreUnknownKeys = true }
 
+    @Volatile
+    private var userIdForToken: Pair<String, String>? = null
+
     override suspend fun searchTracks(title: String, artist: String): List<SpotifyTrack> =
         search(strictQuery(title, artist), SEARCH_RESULT_LIMIT)
 
@@ -132,9 +138,19 @@ class OkHttpSpotifyApi(
     }
 
     override suspend fun currentUserName(): String {
-        val user = json.decodeFromString<UserDto>(execute(RequestSpec("GET", baseUrl.newBuilder().addPathSegment("me").build(), null)))
+        val user = currentUser()
         return user.displayName ?: user.id
     }
+
+    /** The account behind one access token never changes, so the id is asked for once per token. */
+    override suspend fun currentUserId(): String {
+        val token = tokens.current()
+        userIdForToken?.takeIf { (knownToken, _) -> knownToken == token }?.let { (_, userId) -> return userId }
+        return currentUser().id.also { userId -> userIdForToken = token to userId }
+    }
+
+    private suspend fun currentUser(): UserDto =
+        json.decodeFromString<UserDto>(execute(RequestSpec("GET", baseUrl.newBuilder().addPathSegment("me").build(), null)))
 
     override suspend fun createPlaylist(name: String): SpotifyPlaylist {
         val url = baseUrl.newBuilder().addPathSegment("me").addPathSegment("playlists").build()

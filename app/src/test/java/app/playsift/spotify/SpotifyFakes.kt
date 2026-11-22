@@ -52,6 +52,10 @@ open class FakeSpotifyApi(var catalogue: Map<String, List<SpotifyTrack>> = empty
 
     override suspend fun currentUserName() = "Test User"
 
+    var userId = "test-user"
+
+    override suspend fun currentUserId() = userId
+
     override suspend fun createPlaylist(name: String): SpotifyPlaylist {
         createdNames += name
         return SpotifyPlaylist("playlist-${createdNames.size}", "https://open.spotify.com/playlist/playlist-${createdNames.size}")
@@ -69,7 +73,8 @@ open class FakeSpotifyApi(var catalogue: Map<String, List<SpotifyTrack>> = empty
 
 class FakeSpotifyDao : SpotifyDao {
     val matches = mutableMapOf<Triple<String, String, String>, SpotifyMatchEntry>()
-    val playlists = mutableMapOf<String, SpotifyPlaylistEntry>()
+    /** Keyed by account id and source key. */
+    val playlists = mutableMapOf<Pair<String, String>, SpotifyPlaylistEntry>()
 
     override suspend fun allMatches() = matches.values.toList()
 
@@ -77,14 +82,17 @@ class FakeSpotifyDao : SpotifyDao {
         matches[Triple(entry.folderPath, entry.fileName, entry.cueTitle)] = entry
     }
 
-    override suspend fun playlistFor(sourceKey: String) = playlists[sourceKey]
+    override suspend fun playlistFor(accountId: String, sourceKey: String) = playlists[accountId to sourceKey]
 
     override suspend fun upsertPlaylist(entry: SpotifyPlaylistEntry) {
-        playlists[entry.sourceKey] = entry
+        playlists[entry.accountId to entry.sourceKey] = entry
     }
 
-    override suspend fun deletePlaylist(sourceKey: String) {
-        playlists.remove(sourceKey)
+    override suspend fun adoptUnscopedPlaylists(accountId: String) {
+        playlists.filterKeys { (owner, _) -> owner.isEmpty() }.forEach { (key, entry) ->
+            playlists.remove(key)
+            playlists[accountId to key.second] = entry.copy(accountId = accountId)
+        }
     }
 }
 

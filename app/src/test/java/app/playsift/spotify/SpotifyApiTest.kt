@@ -123,6 +123,16 @@ class SpotifyApiTest {
     }
 
     @Test
+    fun theUserIdIsAskedForOncePerAccessToken() = runTest {
+        server.enqueue(reply(200, """{"id":"user-1","display_name":"Issa"}"""))
+
+        assertEquals("user-1", api.currentUserId())
+        assertEquals("user-1", api.currentUserId())
+
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
     fun aSecondUnauthorizedAnswerIsAnError() = runTest {
         server.enqueue(reply(401))
         server.enqueue(reply(401))

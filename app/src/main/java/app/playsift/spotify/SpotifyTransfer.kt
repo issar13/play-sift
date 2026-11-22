@@ -54,7 +54,7 @@ class SongMatcher(private val api: SpotifyApi, private val dao: SpotifyDao, priv
     suspend fun match(tracks: List<PlayerTrack>, onProgress: suspend (done: Int, total: Int) -> Unit): MatchReport {
         val cached = dao.allMatches().associateBy { HistoryKey(it.folderPath, it.fileName, it.cueTitle) }
         val results = tracks.mapIndexed { index, track ->
-            val cachedMatch = cached[track.historyKey()]
+            val cachedMatch = cached[track.historyKey()]?.takeIf { it.isFor(track) }
             val result = if (cachedMatch != null) {
                 SongResult.Matched(MatchedSong(track, cachedMatch.spotifyUri, cachedMatch.isConfirmedByUser))
             } else {
@@ -94,6 +94,9 @@ class SongMatcher(private val api: SpotifyApi, private val dao: SpotifyDao, priv
             MatchResult.NotFound -> SongResult.Missing(track)
         }
 
+    private fun SpotifyMatchEntry.isFor(track: PlayerTrack) =
+        localTitle == track.title && localArtist == track.artist && localDurationMillis == track.durationMillis
+
     private fun entryFor(track: PlayerTrack, candidate: SpotifyTrack, isConfirmedByUser: Boolean): SpotifyMatchEntry {
         val key = track.historyKey()
         return SpotifyMatchEntry(
@@ -103,6 +106,9 @@ class SongMatcher(private val api: SpotifyApi, private val dao: SpotifyDao, priv
             spotifyUri = candidate.uri,
             spotifyTitle = candidate.title,
             spotifyArtist = candidate.artists.joinToString(", "),
+            localTitle = track.title,
+            localArtist = track.artist,
+            localDurationMillis = track.durationMillis,
             isConfirmedByUser = isConfirmedByUser,
             matchedAt = clock.instant(),
         )
@@ -117,18 +123,24 @@ class PlaylistPublisher(private val api: SpotifyApi, private val dao: SpotifyDao
      */
     suspend fun publish(source: SendSource, name: String, uris: List<String>): SpotifyPlaylist {
         val playlistKey = source.playlistKey(name)
-        val remembered = dao.playlistFor(playlistKey)
+        val accountId = accountIdForPlaylists()
+        val remembered = dao.playlistFor(accountId, playlistKey)
         val playlist = remembered?.let { SpotifyPlaylist(it.playlistId, it.url) }
         val reused = playlist?.let { tryFill(it, uris) }
         if (reused != null) return reused
         val created = api.createPlaylist(name)
-        dao.upsertPlaylist(SpotifyPlaylistEntry(playlistKey, created.id, created.url))
+        dao.upsertPlaylist(SpotifyPlaylistEntry(accountId, playlistKey, created.id, created.url))
         fill(created, uris)
         return created
     }
 
     /** True when sending [source] under [name] would update a playlist Play Sift already made. */
-    suspend fun hasPlaylistFor(source: SendSource, name: String): Boolean = dao.playlistFor(source.playlistKey(name)) != null
+    suspend fun hasPlaylistFor(source: SendSource, name: String): Boolean =
+        dao.playlistFor(accountIdForPlaylists(), source.playlistKey(name)) != null
+
+    /** Playlists saved before accounts were tracked belong to whoever uses Play Sift first after the update. */
+    private suspend fun accountIdForPlaylists(): String =
+        api.currentUserId().also { dao.adoptUnscopedPlaylists(it) }
 
     private suspend fun tryFill(playlist: SpotifyPlaylist, uris: List<String>): SpotifyPlaylist? =
         try {

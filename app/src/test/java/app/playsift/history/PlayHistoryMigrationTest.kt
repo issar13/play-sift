@@ -36,9 +36,9 @@ class PlayHistoryMigrationTest {
             .build()
         val rows = database.playHistoryDao().all().sortedBy { it.fileName }
         val spotifyDao = database.spotifyDao()
-        spotifyDao.upsertPlaylist(SpotifyPlaylistEntry("top", "playlist-1", "https://open.spotify.com/playlist/playlist-1"))
-        spotifyDao.upsertMatch(SpotifyMatchEntry("primary/Music/", "a.mp3", "", "spotify:track:1", "A", "Artist", false, Instant.ofEpochMilli(5000)))
-        val storedPlaylist = spotifyDao.playlistFor("top")
+        spotifyDao.upsertPlaylist(SpotifyPlaylistEntry("account", "top", "playlist-1", "https://open.spotify.com/playlist/playlist-1"))
+        spotifyDao.upsertMatch(SpotifyMatchEntry("primary/Music/", "a.mp3", "", "spotify:track:1", "A", "Artist", "A", "Artist", 1000, false, Instant.ofEpochMilli(5000)))
+        val storedPlaylist = spotifyDao.playlistFor("account", "top")
         val storedMatches = spotifyDao.allMatches()
         database.close()
 

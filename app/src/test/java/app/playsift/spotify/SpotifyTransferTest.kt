@@ -246,7 +246,7 @@ class SpotifyTransferTest {
         val second = publisher.publish(SendSource.TickedSongs, "Picks", listOf("spotify:track:a"))
 
         assertEquals(2, api.createdNames.size)
-        assertEquals(second.id, dao.playlists.getValue("ticked:picks").playlistId)
+        assertEquals(second.id, dao.playlists.getValue("test-user" to "ticked:picks").playlistId)
     }
 
     @Test
@@ -272,5 +272,69 @@ class SpotifyTransferTest {
         )
 
         assertEquals(listOf("spotify:track:x", "spotify:track:y"), uniqueUris(songs))
+    }
+
+    @Test
+    fun aCachedMatchIsNotReusedWhenTheRecordingChangedUnderTheSameFileName() = runTest {
+        api.catalogue = mapOf("Exact" to listOf(spotifyTrack("Exact")), "Replaced" to listOf(spotifyTrack("Replaced", uri = "spotify:track:new")))
+        val matcher = SongMatcher(api, dao, clock)
+        matcher.match(listOf(songTrack(1, title = "Exact"))) { _, _ -> }
+
+        val replaced = songTrack(1, title = "Replaced")
+        val second = matcher.match(listOf(replaced)) { _, _ -> }
+
+        assertEquals(listOf("Exact", "Replaced"), api.searchedTitles)
+        assertEquals(listOf("spotify:track:new"), second.matched.map { it.spotifyUri })
+        assertEquals("Replaced", dao.matches.values.single().localTitle)
+    }
+
+    @Test
+    fun aCachedMatchIsNotReusedWhenTheLengthOrArtistChanged() = runTest {
+        api.catalogue = mapOf("Exact" to listOf(spotifyTrack("Exact")))
+        val matcher = SongMatcher(api, dao, clock)
+        val original = songTrack(1, title = "Exact")
+        matcher.match(listOf(original)) { _, _ -> }
+
+        matcher.match(listOf(original.copy(durationMillis = 90_000))) { _, _ -> }
+        matcher.match(listOf(original.copy(artist = "Someone Else"))) { _, _ -> }
+
+        assertEquals(3, api.searchedTitles.size)
+    }
+
+    @Test
+    fun aConfirmedMatchIsNotReusedForADifferentRecording() = runTest {
+        val matcher = SongMatcher(api, dao, clock)
+        val original = songTrack(1, title = "Lost")
+        matcher.confirm(UnsureSong(original, spotifyTrack("Lost - Live", uri = "spotify:track:live")))
+
+        val report = matcher.match(listOf(original.copy(title = "Lost (Club Remix)"))) { _, _ -> }
+
+        assertEquals(listOf("Lost (Club Remix)"), api.searchedTitles)
+        assertTrue(report.matched.isEmpty())
+    }
+
+    @Test
+    fun playlistsAreRememberedPerSpotifyAccount() = runTest {
+        val publisher = PlaylistPublisher(api, dao)
+        val first = publisher.publish(SendSource.TickedSongs, "Picks", listOf("spotify:track:a"))
+
+        api.userId = "other-user"
+        assertEquals(false, publisher.hasPlaylistFor(SendSource.TickedSongs, "Picks"))
+        val second = publisher.publish(SendSource.TickedSongs, "Picks", listOf("spotify:track:a"))
+
+        assertNotEquals(first.id, second.id)
+        assertEquals(2, api.createdNames.size)
+    }
+
+    @Test
+    fun playlistsSavedBeforeAccountsWereTrackedBelongToTheFirstAccountThatSends() = runTest {
+        dao.playlists["" to "ticked:picks"] = SpotifyPlaylistEntry("", "ticked:picks", "old-playlist", "url")
+        val publisher = PlaylistPublisher(api, dao)
+
+        val reused = publisher.publish(SendSource.TickedSongs, "Picks", listOf("spotify:track:a"))
+
+        assertEquals("old-playlist", reused.id)
+        assertTrue(api.createdNames.isEmpty())
+        assertEquals("test-user", dao.playlists.values.single().accountId)
     }
 }

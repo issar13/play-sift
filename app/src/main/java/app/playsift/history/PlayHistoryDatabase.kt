@@ -46,6 +46,30 @@ val MIGRATION_2_3 = object : Migration(2, 3) {
     }
 }
 
+/**
+ * Matches now record which local recording they were made for, and playlists are kept per Spotify account.
+ * Old matches have no such record and are only a cache, so they are dropped and found again; old playlists
+ * keep an empty account id and are given to the account that sends first.
+ */
+val MIGRATION_3_4 = object : Migration(3, 4) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("DROP TABLE `spotify_match`")
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `spotify_match` (`folderPath` TEXT NOT NULL, `fileName` TEXT NOT NULL, `cueTitle` TEXT NOT NULL, " +
+                "`spotifyUri` TEXT NOT NULL, `spotifyTitle` TEXT NOT NULL, `spotifyArtist` TEXT NOT NULL, " +
+                "`localTitle` TEXT NOT NULL, `localArtist` TEXT NOT NULL, `localDurationMillis` INTEGER NOT NULL, " +
+                "`isConfirmedByUser` INTEGER NOT NULL, `matchedAt` INTEGER NOT NULL, PRIMARY KEY(`folderPath`, `fileName`, `cueTitle`))",
+        )
+        db.execSQL(
+            "CREATE TABLE `spotify_playlist_new` (`accountId` TEXT NOT NULL, `sourceKey` TEXT NOT NULL, `playlistId` TEXT NOT NULL, " +
+                "`url` TEXT NOT NULL, PRIMARY KEY(`accountId`, `sourceKey`))",
+        )
+        db.execSQL("INSERT INTO `spotify_playlist_new` SELECT '', `sourceKey`, `playlistId`, `url` FROM `spotify_playlist`")
+        db.execSQL("DROP TABLE `spotify_playlist`")
+        db.execSQL("ALTER TABLE `spotify_playlist_new` RENAME TO `spotify_playlist`")
+    }
+}
+
 class InstantConverters {
     @TypeConverter
     fun toEpochMillis(instant: Instant?): Long? = instant?.toEpochMilli()
@@ -54,7 +78,7 @@ class InstantConverters {
     fun fromEpochMillis(epochMillis: Long?): Instant? = epochMillis?.let(Instant::ofEpochMilli)
 }
 
-@Database(entities = [PlayHistoryEntry::class, SpotifyMatchEntry::class, SpotifyPlaylistEntry::class], version = 3)
+@Database(entities = [PlayHistoryEntry::class, SpotifyMatchEntry::class, SpotifyPlaylistEntry::class], version = 4)
 @TypeConverters(InstantConverters::class)
 abstract class PlayHistoryDatabase : RoomDatabase() {
     abstract fun playHistoryDao(): PlayHistoryDao
@@ -64,7 +88,7 @@ abstract class PlayHistoryDatabase : RoomDatabase() {
     companion object {
         const val FILE_NAME = "play_history.db"
 
-        val MIGRATIONS = arrayOf(MIGRATION_1_2, MIGRATION_2_3)
+        val MIGRATIONS = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
 
         @Volatile
         private var instance: PlayHistoryDatabase? = null

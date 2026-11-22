@@ -12,12 +12,13 @@ interface SpotifyDao {
     @Upsert
     suspend fun upsertMatch(entry: SpotifyMatchEntry)
 
-    @Query("SELECT * FROM spotify_playlist WHERE sourceKey = :sourceKey")
-    suspend fun playlistFor(sourceKey: String): SpotifyPlaylistEntry?
+    @Query("SELECT * FROM spotify_playlist WHERE accountId = :accountId AND sourceKey = :sourceKey")
+    suspend fun playlistFor(accountId: String, sourceKey: String): SpotifyPlaylistEntry?
 
     @Upsert
     suspend fun upsertPlaylist(entry: SpotifyPlaylistEntry)
 
-    @Query("DELETE FROM spotify_playlist WHERE sourceKey = :sourceKey")
-    suspend fun deletePlaylist(sourceKey: String)
+    /** Gives the playlists saved before accounts were tracked to [accountId], the account that is signed in now. */
+    @Query("UPDATE OR REPLACE spotify_playlist SET accountId = :accountId WHERE accountId = ''")
+    suspend fun adoptUnscopedPlaylists(accountId: String)
 }
