@@ -284,6 +284,16 @@ class LibraryViewModel(
                 now = now,
             )
             val content = loadScreenContent(current, summary, allTracks, now)
+            val counts = LibraryCounts(
+                mostPlayed = tracksFor(LibraryList.MostPlayed, allTracks, current.cutoff.period, now).size,
+                neverPlayed = tracksFor(LibraryList.NeverPlayed, allTracks, current.cutoff.period, now).size,
+                deleteCandidates = tracksFor(LibraryList.DeleteCandidates, allTracks, current.cutoff.period, now).size,
+                large = when (current.screen) {
+                    Screen.Home -> content.home?.largeSongs
+                    Screen.Large -> content.tracks.size.takeIf { !content.sizesUnavailable }
+                    else -> mutableState.value.libraryCounts?.large
+                },
+            )
             mutableState.update {
                 it.copy(
                     access = accessState,
@@ -293,6 +303,7 @@ class LibraryViewModel(
                     sizesUnavailable = content.sizesUnavailable,
                     historyHealth = health,
                     showImportOffer = showImportOffer,
+                    libraryCounts = counts,
                     selectedIds = emptySet(),
                     isLoading = false,
                 )

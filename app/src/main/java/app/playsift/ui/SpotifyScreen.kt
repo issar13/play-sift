@@ -15,8 +15,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -27,11 +25,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import app.playsift.R
 import app.playsift.spotify.OfferedSong
 import app.playsift.spotify.SourceChoice
 import app.playsift.spotify.SpotifyStage
@@ -39,7 +35,6 @@ import app.playsift.spotify.SpotifyUiState
 import app.playsift.spotify.UnsureSong
 
 class SpotifyActions(
-    val onBack: () -> Unit,
     val onSignIn: () -> Unit,
     val onSignOut: () -> Unit,
     val onClientIdChange: (String) -> Unit,
@@ -59,12 +54,7 @@ class SpotifyActions(
 @Composable
 fun SpotifyScreen(state: SpotifyUiState, isPreparingTrash: Boolean, actions: SpotifyActions) {
     Column(modifier = Modifier.fillMaxSize()) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 8.dp)) {
-            IconButton(onClick = actions.onBack) {
-                Icon(painter = painterResource(R.drawable.ic_arrow_back), contentDescription = "Back")
-            }
-            Text("Send to Spotify", style = MaterialTheme.typography.titleLarge)
-        }
+        Text("Send to Spotify", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(start = 16.dp, top = 8.dp))
         Column(
             modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -74,7 +64,6 @@ fun SpotifyScreen(state: SpotifyUiState, isPreparingTrash: Boolean, actions: Spo
                 SignInSection(state, actions)
             } else {
                 StageSection(state, isPreparingTrash, actions)
-                AccountSection(state, actions)
             }
         }
     }
@@ -102,14 +91,14 @@ private fun ClientIdField(state: SpotifyUiState, actions: SpotifyActions) {
 }
 
 @Composable
-private fun AccountSection(state: SpotifyUiState, actions: SpotifyActions) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+internal fun SpotifyAccountSection(state: SpotifyUiState, actions: SpotifyActions) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 8.dp)) {
         Text(
-            text = state.userName?.let { "Signed in as $it" } ?: "Signed in to Spotify",
+            text = if (state.isSignedIn) state.userName?.let { "Signed in as $it" } ?: "Signed in to Spotify" else "Not signed in to Spotify",
             style = MaterialTheme.typography.bodySmall,
         )
         ClientIdField(state, actions)
-        OutlinedButton(onClick = actions.onSignOut) { Text("Sign out") }
+        if (state.isSignedIn) OutlinedButton(onClick = actions.onSignOut) { Text("Sign out") }
     }
 }
 

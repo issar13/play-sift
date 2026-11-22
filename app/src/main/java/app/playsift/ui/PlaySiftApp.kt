@@ -62,13 +62,19 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private val tabs = listOf(
-    "Home" to Screen.Home,
-    "Most played" to Screen.MostPlayed,
-    "Never played" to Screen.NeverPlayed,
-    "Delete" to Screen.Delete,
-    "Settings" to Screen.Settings,
-)
+private enum class AppTab(val label: String, val iconResource: Int) {
+    Home("Home", R.drawable.ic_tab_home),
+    Library("Library", R.drawable.ic_tab_library),
+    Spotify("Spotify", R.drawable.ic_tab_spotify),
+    Settings("Settings", R.drawable.ic_tab_settings),
+}
+
+private fun Screen.tab() = when (this) {
+    Screen.Home -> AppTab.Home
+    Screen.MostPlayed, Screen.NeverPlayed, Screen.Delete, Screen.Large -> AppTab.Library
+    Screen.Spotify -> AppTab.Spotify
+    Screen.Settings -> AppTab.Settings
+}
 
 private const val SPOTIFY_PACKAGE_NAME = "com.spotify.music"
 
@@ -165,6 +171,19 @@ fun PlaySiftApp(viewModel: LibraryViewModel, spotifyViewModel: SpotifyViewModel)
         }
     }
     val moveSelectionToTrash: () -> Unit = { moveToTrash(state.selectedIds, null) }
+    var libraryChip by rememberSaveable { mutableStateOf(Screen.MostPlayed) }
+    val openLibraryChip: (Screen) -> Unit = { chipScreen ->
+        libraryChip = chipScreen
+        viewModel.showScreen(chipScreen)
+    }
+    val openTab: (AppTab) -> Unit = { tab ->
+        when (tab) {
+            AppTab.Home -> viewModel.showScreen(Screen.Home)
+            AppTab.Library -> viewModel.showScreen(libraryChip)
+            AppTab.Spotify -> viewModel.showScreen(Screen.Spotify)
+            AppTab.Settings -> viewModel.showScreen(Screen.Settings)
+        }
+    }
     val sendSelectionToSpotify: () -> Unit = {
         spotifyViewModel.useTickedSongs(state.tracks.filter { it.id in state.selectedIds })
         viewModel.showScreen(Screen.Spotify)
@@ -179,7 +198,6 @@ fun PlaySiftApp(viewModel: LibraryViewModel, spotifyViewModel: SpotifyViewModel)
     }
     val openSignInPage: (String) -> Unit = { url -> CustomTabsIntent.Builder().build().launchUrl(context, Uri.parse(url)) }
     val spotifyActions = SpotifyActions(
-        onBack = { viewModel.showScreen(Screen.Home) },
         onSignIn = { spotifyViewModel.signIn(openSignInPage) },
         onSignOut = spotifyViewModel::signOut,
         onClientIdChange = spotifyViewModel::setClientIdOverride,
@@ -210,7 +228,7 @@ fun PlaySiftApp(viewModel: LibraryViewModel, spotifyViewModel: SpotifyViewModel)
         }
     }
 
-    BackHandler(enabled = state.screen == Screen.Large || state.screen == Screen.Spotify) { viewModel.showScreen(Screen.Home) }
+    BackHandler(enabled = state.screen != Screen.Home) { viewModel.showScreen(Screen.Home) }
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         viewModel.onResume()
@@ -243,12 +261,12 @@ fun PlaySiftApp(viewModel: LibraryViewModel, spotifyViewModel: SpotifyViewModel)
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
             NavigationBar {
-                tabs.forEach { (label, screen) ->
+                AppTab.entries.forEach { tab ->
                     NavigationBarItem(
-                        selected = state.screen == screen || (screen == Screen.Home && state.screen == Screen.Large),
-                        onClick = { viewModel.showScreen(screen) },
-                        icon = {},
-                        label = { Text(label) },
+                        selected = state.screen.tab() == tab,
+                        onClick = { openTab(tab) },
+                        icon = { Icon(painter = painterResource(tab.iconResource), contentDescription = null) },
+                        label = { Text(tab.label) },
                     )
                 }
             }
@@ -266,8 +284,8 @@ fun PlaySiftApp(viewModel: LibraryViewModel, spotifyViewModel: SpotifyViewModel)
                 )
                 state.screen == Screen.Home -> HomeScreen(
                     state = state,
-                    onOpenDelete = { viewModel.showScreen(Screen.Delete) },
-                    onOpenLarge = { viewModel.showScreen(Screen.Large) },
+                    onOpenDelete = { openLibraryChip(Screen.Delete) },
+                    onOpenLarge = { openLibraryChip(Screen.Large) },
                     onAllowFileAccess = {
                         if (isFileAccessBlocked) {
                             openAppSettings()
@@ -277,33 +295,38 @@ fun PlaySiftApp(viewModel: LibraryViewModel, spotifyViewModel: SpotifyViewModel)
                     },
                     onImportHistory = pickHistoryFile,
                     onDismissImportOffer = viewModel::dismissImportOffer,
-                    onOpenSpotify = { viewModel.showScreen(Screen.Spotify) },
                 )
                 state.screen == Screen.Settings -> SettingsScreen(
                     selected = state.cutoff,
                     onSelect = viewModel::setCutoff,
                     onExportHistory = viewModel::exportHistory,
                     onImportHistory = pickHistoryFile,
-                    onOpenSpotify = { viewModel.showScreen(Screen.Spotify) },
+                    spotifyState = spotifyState,
+                    spotifyActions = spotifyActions,
                 )
-                state.screen == Screen.Large -> LargeSongsScreen(
-                    state = state,
-                    onBack = { viewModel.showScreen(Screen.Home) },
-                    onToggleSelected = viewModel::toggleSelected,
-                    onSelectAll = viewModel::selectAll,
-                    isPreparingTrash = isPreparingTrash,
-                    onMoveToTrash = moveSelectionToTrash,
-                    onSendToSpotify = sendSelectionToSpotify,
-                )
-                else -> TrackListScreen(
-                    state = state,
-                    today = LocalDate.now(ZoneOffset.UTC),
-                    onToggleSelected = viewModel::toggleSelected,
-                    onSelectAll = viewModel::selectAll,
-                    isPreparingTrash = isPreparingTrash,
-                    onMoveToTrash = moveSelectionToTrash,
-                    onSendToSpotify = sendSelectionToSpotify,
-                )
+                else -> Column(modifier = Modifier.fillMaxSize()) {
+                    LibraryChips(selected = state.screen, counts = state.libraryCounts, onSelect = openLibraryChip)
+                    if (state.screen == Screen.Large) {
+                        LargeSongsScreen(
+                            state = state,
+                            onToggleSelected = viewModel::toggleSelected,
+                            onSelectAll = viewModel::selectAll,
+                            isPreparingTrash = isPreparingTrash,
+                            onMoveToTrash = moveSelectionToTrash,
+                            onSendToSpotify = sendSelectionToSpotify,
+                        )
+                    } else {
+                        TrackListScreen(
+                            state = state,
+                            today = LocalDate.now(ZoneOffset.UTC),
+                            onToggleSelected = viewModel::toggleSelected,
+                            onSelectAll = viewModel::selectAll,
+                            isPreparingTrash = isPreparingTrash,
+                            onMoveToTrash = moveSelectionToTrash,
+                            onSendToSpotify = sendSelectionToSpotify,
+                        )
+                    }
+                }
             }
         }
     }

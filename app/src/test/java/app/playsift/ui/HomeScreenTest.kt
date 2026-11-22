@@ -150,7 +150,6 @@ class HomeScreenTest {
                 } else {
                     LargeSongsScreen(
                         state = state(screen = Screen.Large, tracks = listOf(largeTrack), sizesById = mapOf(2L to 6_000_000L)),
-                        onBack = { screen = Screen.Home },
                         onToggleSelected = {},
                         onSelectAll = {},
                         onMoveToTrash = {},
@@ -175,7 +174,6 @@ class HomeScreenTest {
                         sizesById = mapOf(1L to 6_000_000L, 2L to 5_500_000L),
                         selectedIds = setOf(1L, 2L),
                     ),
-                    onBack = {},
                     onToggleSelected = {},
                     onSelectAll = {},
                     onMoveToTrash = {},
@@ -216,7 +214,6 @@ class HomeScreenTest {
                         tracks = tracks,
                         sizesById = mapOf(1L to 8_400_000L, 2L to 6_000_000L, 3L to 5_500_000L),
                     ),
-                    onBack = {},
                     onToggleSelected = {},
                     onSelectAll = {},
                     onMoveToTrash = {},
@@ -234,7 +231,6 @@ class HomeScreenTest {
             PlaySiftTheme {
                 LargeSongsScreen(
                     state = state(screen = Screen.Large, tracks = emptyList()).copy(sizesUnavailable = true),
-                    onBack = {},
                     onToggleSelected = {},
                     onSelectAll = {},
                     onMoveToTrash = {},

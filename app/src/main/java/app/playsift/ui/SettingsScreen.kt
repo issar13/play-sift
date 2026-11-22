@@ -3,9 +3,12 @@ package app.playsift.ui
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -17,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import app.playsift.settings.CutoffOption
+import app.playsift.spotify.SpotifyUiState
 
 @Composable
 fun SettingsScreen(
@@ -24,9 +28,10 @@ fun SettingsScreen(
     onSelect: (CutoffOption) -> Unit,
     onExportHistory: () -> Unit,
     onImportHistory: () -> Unit,
-    onOpenSpotify: () -> Unit = {},
+    spotifyState: SpotifyUiState,
+    spotifyActions: SpotifyActions,
 ) {
-    Column(modifier = Modifier.padding(16.dp)) {
+    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
         Text("Never played for at least", style = MaterialTheme.typography.titleMedium)
         CutoffOption.entries.forEach { option ->
             Row(
@@ -51,6 +56,6 @@ fun SettingsScreen(
             OutlinedButton(onClick = onImportHistory) { Text("Import history") }
         }
         Text("Spotify", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 24.dp))
-        OutlinedButton(onClick = onOpenSpotify, modifier = Modifier.padding(vertical = 8.dp)) { Text("Send songs to Spotify") }
+        SpotifyAccountSection(spotifyState, spotifyActions)
     }
 }

@@ -9,6 +9,9 @@ import app.playsift.settings.CutoffOption
 
 enum class Screen { Home, MostPlayed, NeverPlayed, Delete, Large, Settings, Spotify }
 
+/** How many songs each Library chip holds. [large] stays null until the file sizes have been read. */
+data class LibraryCounts(val mostPlayed: Int, val neverPlayed: Int, val deleteCandidates: Int, val large: Int?)
+
 data class LibraryUiState(
     val access: AccessState,
     val list: LibraryList,
@@ -24,6 +27,7 @@ data class LibraryUiState(
     val hasFileAccess: Boolean = false,
     val sizesUnavailable: Boolean = false,
     val showImportOffer: Boolean = false,
+    val libraryCounts: LibraryCounts? = null,
 )
 
 enum class UserMessage(val text: String) {

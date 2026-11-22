@@ -681,6 +681,18 @@ class LibraryViewModelTest {
     }
 
     @Test
+    fun libraryCountsKeepTheLargeCountWhenAnotherChipIsOpen() = runTest(dispatcher) {
+        val viewModel = viewModel(library = largeLibrary, fileSizes = FakeFileSizes(largeSizes), startScreen = Screen.Home)
+        viewModel.setFileAccess(true)
+        advanceUntilIdle()
+        assertEquals(2, viewModel.state.value.libraryCounts?.large)
+        viewModel.showScreen(Screen.Delete)
+        advanceUntilIdle()
+        assertEquals(2, viewModel.state.value.libraryCounts?.large)
+        assertEquals(viewModel.state.value.tracks.size, viewModel.state.value.libraryCounts?.deleteCandidates)
+    }
+
+    @Test
     fun fileAccessFollowsPermissionRecheckOnResume() = runTest(dispatcher) {
         val viewModel = viewModel(library = largeLibrary, fileSizes = FakeFileSizes(largeSizes), startScreen = Screen.Home)
         advanceUntilIdle()
