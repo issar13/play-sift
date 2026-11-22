@@ -100,6 +100,8 @@ fun PlaySiftApp(viewModel: LibraryViewModel) {
         }
     }
 
+    val pickHistoryFile = { importHistoryLauncher.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }
+
     val message by viewModel.message.collectAsState()
     LaunchedEffect(message) {
         message?.let { shownMessage ->
@@ -231,12 +233,14 @@ fun PlaySiftApp(viewModel: LibraryViewModel) {
                             fileAccessLauncher.launch(mediaPermission)
                         }
                     },
+                    onImportHistory = pickHistoryFile,
+                    onDismissImportOffer = viewModel::dismissImportOffer,
                 )
                 state.screen == Screen.Settings -> SettingsScreen(
                     selected = state.cutoff,
                     onSelect = viewModel::setCutoff,
                     onExportHistory = viewModel::exportHistory,
-                    onImportHistory = { importHistoryLauncher.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) },
+                    onImportHistory = pickHistoryFile,
                 )
                 state.screen == Screen.Large -> LargeSongsScreen(
                     state = state,

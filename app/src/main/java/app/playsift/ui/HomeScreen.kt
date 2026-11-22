@@ -9,12 +9,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -39,12 +41,15 @@ fun HomeScreen(
     onOpenDelete: () -> Unit,
     onOpenLarge: () -> Unit,
     onAllowFileAccess: () -> Unit,
+    onImportHistory: () -> Unit = {},
+    onDismissImportOffer: () -> Unit = {},
 ) {
     val summary = state.home ?: return
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        if (state.showImportOffer) ImportOfferBanner(onImportHistory, onDismissImportOffer)
         HeaderBand(summary)
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             SummaryCard(
@@ -156,3 +161,16 @@ private fun Highlights(summary: HomeSummary) {
 }
 
 private fun pluralPlays(plays: Int) = if (plays == 1) "1 play" else "$plays plays"
+
+@Composable
+private fun ImportOfferBanner(onImport: () -> Unit, onDismiss: () -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.large, modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Play Sift has no saved history yet. If you saved a play-history file from an earlier install, import it to bring your play counts back.")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onImport) { Text("Import history") }
+                TextButton(onClick = onDismiss) { Text("Not now") }
+            }
+        }
+    }
+}

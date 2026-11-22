@@ -51,6 +51,7 @@ private fun entryToJson(entry: PlayHistoryEntry): JSONObject =
     JSONObject()
         .put("folderPath", entry.folderPath)
         .put("fileName", entry.fileName)
+        .put("cueTitle", entry.cueTitle)
         .put("title", entry.title)
         .put("artist", entry.artist)
         .put("album", entry.album)
@@ -63,6 +64,7 @@ private fun entryToJson(entry: PlayHistoryEntry): JSONObject =
 private fun entryFromJson(json: JSONObject) = PlayHistoryEntry(
     folderPath = json.getString("folderPath"),
     fileName = json.getString("fileName"),
+    cueTitle = json.optString("cueTitle", ""),
     title = json.getString("title"),
     artist = json.getString("artist"),
     album = json.getString("album"),

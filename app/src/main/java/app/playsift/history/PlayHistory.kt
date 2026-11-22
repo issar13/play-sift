@@ -3,6 +3,7 @@ package app.playsift.history
 import android.content.Context
 import android.util.Log
 import app.playsift.player.PlayerTrack
+import app.playsift.settings.settingsDataStore
 import java.time.Clock
 import kotlinx.coroutines.CancellationException
 
@@ -15,6 +16,9 @@ interface PlayHistory {
 
     /** Merges a backup file's text into the stored history. */
     suspend fun importFrom(json: String)
+
+    /** True before the first snapshot of a fresh install. */
+    suspend fun isEmpty(): Boolean
 }
 
 class RoomPlayHistory(
@@ -38,11 +42,16 @@ class RoomPlayHistory(
     override suspend fun exportNow() = backupFile.write(encodeHistory(dao.all(), clock.instant()))
 
     override suspend fun importFrom(json: String) = dao.importEntries(decodeHistory(json))
+
+    override suspend fun isEmpty() = dao.count() == 0
 }
 
 fun roomPlayHistory(context: Context): PlayHistory =
     RoomPlayHistory(
         dao = PlayHistoryDatabase.open(context).playHistoryDao(),
-        backupFile = MediaStoreHistoryBackupFile(context.contentResolver),
+        backupFile = FallbackHistoryBackupFile(
+            storage = MediaStoreBackupStorage(context.contentResolver),
+            locationStore = DataStoreBackupLocation(context.settingsDataStore),
+        ),
         clock = Clock.systemUTC(),
     )

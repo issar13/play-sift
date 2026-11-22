@@ -40,6 +40,22 @@ class HistorySnapshotTest {
     )
 
     @Test
+    fun cueTracksSharingOneFileKeepSeparateRows() {
+        val firstCue = track(title = "Cue one", playCount = 3, id = 1).copy(isCueTrack = true)
+        val secondCue = track(title = "Cue two", playCount = 7, id = 2).copy(isCueTrack = true)
+
+        val entries = snapshotHistory(emptyList(), listOf(firstCue, secondCue), now).entries
+
+        assertEquals(setOf("Cue one" to 3, "Cue two" to 7), entries.map { it.cueTitle to it.lastSeenPlayerCount }.toSet())
+        assertEquals(setOf("Cue one", "Cue two"), entries.map { it.title }.toSet())
+    }
+
+    @Test
+    fun ordinaryTrackKeyHasNoCueTitle() {
+        assertEquals("", track().historyKey().cueTitle)
+    }
+
+    @Test
     fun newSongStartsRowWithPlayerCount() {
         val snapshot = snapshotHistory(emptyList(), listOf(track(playCount = 4, lastPlayedAt = later)), now)
 

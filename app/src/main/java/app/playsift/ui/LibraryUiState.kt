@@ -23,6 +23,7 @@ data class LibraryUiState(
     val sizesById: Map<Long, Long> = emptyMap(),
     val hasFileAccess: Boolean = false,
     val sizesUnavailable: Boolean = false,
+    val showImportOffer: Boolean = false,
 )
 
 enum class UserMessage(val text: String) {

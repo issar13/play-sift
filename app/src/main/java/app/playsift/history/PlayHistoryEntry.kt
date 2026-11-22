@@ -4,10 +4,10 @@ import androidx.room.Entity
 import java.time.Instant
 
 /**
- * One song, keyed by file location because the player's track ids change when its library is rebuilt.
+ * One song, keyed by file location (plus the title for cue tracks) because the player's track ids change when its library is rebuilt.
  * [carriedPlays] holds plays from before player resets; [lastSeenPlayerCount] is the player's count at the last snapshot.
  */
-@Entity(tableName = "play_history", primaryKeys = ["folderPath", "fileName"])
+@Entity(tableName = "play_history", primaryKeys = ["folderPath", "fileName", "cueTitle"])
 data class PlayHistoryEntry(
     val folderPath: String,
     val fileName: String,
@@ -19,10 +19,12 @@ data class PlayHistoryEntry(
     val firstSeenAt: Instant,
     val lastPlayedAt: Instant?,
     val updatedAt: Instant,
+    /** The track title for a cue track, so tracks cut from one file stay separate rows; empty for an ordinary file. */
+    val cueTitle: String = "",
 ) {
     val totalPlays: Int get() = carriedPlays + lastSeenPlayerCount
 }
 
-data class HistoryKey(val folderPath: String, val fileName: String)
+data class HistoryKey(val folderPath: String, val fileName: String, val cueTitle: String = "")
 
-fun PlayHistoryEntry.historyKey() = HistoryKey(folderPath, fileName)
+fun PlayHistoryEntry.historyKey() = HistoryKey(folderPath, fileName, cueTitle)

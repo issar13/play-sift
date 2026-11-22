@@ -28,6 +28,8 @@ import app.playsift.player.PlayerTrack
 import app.playsift.player.historyHealth
 import app.playsift.settings.CutoffOption
 import app.playsift.settings.CutoffSettings
+import app.playsift.settings.DataStoreHistoryImportOffer
+import app.playsift.settings.HistoryImportOffer
 import app.playsift.settings.settingsDataStore
 import java.time.Clock
 import java.time.Instant
@@ -48,6 +50,7 @@ class LibraryViewModel(
     private val fileSizes: FileSizes,
     private val settings: CutoffSettings,
     private val clock: Clock,
+    private val importOffer: HistoryImportOffer,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(
         LibraryUiState(
@@ -132,8 +135,16 @@ class LibraryViewModel(
                 history.importFrom(readBackupText())
             }
             mutableMessage.value = message
-            if (message == UserMessage.HistoryImported) reload()
+            if (message == UserMessage.HistoryImported) {
+                dismissImportOffer()
+                reload()
+            }
         }
+    }
+
+    fun dismissImportOffer() {
+        mutableState.update { it.copy(showImportOffer = false) }
+        viewModelScope.launch { importOffer.markDone() }
     }
 
     private suspend fun messageAfter(success: UserMessage, failure: UserMessage, action: suspend () -> Unit): UserMessage =
@@ -257,6 +268,7 @@ class LibraryViewModel(
             }
             val now = clock.instant()
             val playerTracks = library.tracks(LibraryList.AllTracks, current.cutoff.period, now)
+            val showImportOffer = importOffer.shouldOffer(storeWasEmpty = history.isEmpty())
             val entries = history.record(playerTracks)
             val allTracks = mergeHistory(playerTracks, entries)
             val summary = historySummary(allTracks, entries)
@@ -276,6 +288,7 @@ class LibraryViewModel(
                     sizesById = content.sizesById,
                     sizesUnavailable = content.sizesUnavailable,
                     historyHealth = health,
+                    showImportOffer = showImportOffer,
                     selectedIds = emptySet(),
                     isLoading = false,
                 )
@@ -370,6 +383,7 @@ class LibraryViewModel(
                 fileSizes = MediaStoreFileSizes(application.contentResolver),
                 settings = CutoffSettings(application.settingsDataStore),
                 clock = Clock.systemUTC(),
+                importOffer = DataStoreHistoryImportOffer(application.settingsDataStore),
             ) as T
         }
     }

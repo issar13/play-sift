@@ -13,6 +13,9 @@ abstract class PlayHistoryDao {
     @Query("SELECT * FROM play_history")
     abstract suspend fun all(): List<PlayHistoryEntry>
 
+    @Query("SELECT COUNT(*) FROM play_history")
+    abstract suspend fun count(): Int
+
     @Upsert
     abstract suspend fun upsert(entries: List<PlayHistoryEntry>)
 

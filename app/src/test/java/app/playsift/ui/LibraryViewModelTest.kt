@@ -21,6 +21,7 @@ import app.playsift.player.LibraryList
 import app.playsift.player.PlayerTrack
 import app.playsift.settings.CutoffOption
 import app.playsift.settings.CutoffSettings
+import app.playsift.settings.HistoryImportOffer
 import java.io.File
 import java.io.IOException
 import java.time.Clock
@@ -90,6 +91,22 @@ private class FakePlayHistory(var stored: List<PlayHistoryEntry> = emptyList()) 
 
     override suspend fun record(playerTracks: List<PlayerTrack>): List<PlayHistoryEntry> =
         snapshotHistory(stored, playerTracks, now).entries.also { stored = it }
+
+    override suspend fun isEmpty() = stored.isEmpty()
+}
+
+/** Follows the real first-run rule: the first answer sticks until [markDone]. */
+private class FakeImportOffer : HistoryImportOffer {
+    var state: String? = null
+
+    override suspend fun shouldOffer(storeWasEmpty: Boolean): Boolean {
+        if (state == null && storeWasEmpty) state = "pending"
+        return state == "pending"
+    }
+
+    override suspend fun markDone() {
+        state = "done"
+    }
 }
 
 private class FakeFileSizes(var sizes: Map<FileLocation, Long> = emptyMap()) : FileSizes {
@@ -173,7 +190,8 @@ class LibraryViewModelTest {
         matcher: FakeMatcher = FakeMatcher(),
         fileSizes: FakeFileSizes = FakeFileSizes(),
         startScreen: Screen = Screen.Delete,
-    ) = LibraryViewModel(library, history, access, matcher, fileSizes, settings, clock).also { it.showScreen(startScreen) }
+        importOffer: HistoryImportOffer = FakeImportOffer(),
+    ) = LibraryViewModel(library, history, access, matcher, fileSizes, settings, clock, importOffer).also { it.showScreen(startScreen) }
 
     @Test
     fun startsOnAccessScreenWhenPermissionMissing() = runTest(dispatcher) {
@@ -497,7 +515,7 @@ class LibraryViewModelTest {
             override suspend fun updateData(transform: suspend (Preferences) -> Preferences): Preferences =
                 throw IOException("disk full")
         }
-        val viewModel = LibraryViewModel(FakeLibrary((1L..3L).map(::track)), FakePlayHistory(), FakeAccess(AccessState.Ready), FakeMatcher(), FakeFileSizes(), CutoffSettings(failingDataStore), clock)
+        val viewModel = LibraryViewModel(FakeLibrary((1L..3L).map(::track)), FakePlayHistory(), FakeAccess(AccessState.Ready), FakeMatcher(), FakeFileSizes(), CutoffSettings(failingDataStore), clock, FakeImportOffer())
         advanceUntilIdle()
         viewModel.setCutoff(CutoffOption.SixMonths)
         advanceUntilIdle()
@@ -602,8 +620,42 @@ class LibraryViewModelTest {
     }
 
     @Test
+    fun freshInstallOffersImportUntilDismissed() = runTest(dispatcher) {
+        val importOffer = FakeImportOffer()
+        val viewModel = viewModel(importOffer = importOffer)
+        advanceUntilIdle()
+        assertTrue(viewModel.state.value.showImportOffer)
+        viewModel.refresh()
+        advanceUntilIdle()
+        assertTrue(viewModel.state.value.showImportOffer)
+        viewModel.dismissImportOffer()
+        advanceUntilIdle()
+        assertEquals(false, viewModel.state.value.showImportOffer)
+        viewModel.refresh()
+        advanceUntilIdle()
+        assertEquals(false, viewModel.state.value.showImportOffer)
+    }
+
+    @Test
+    fun existingHistoryNeverOffersImport() = runTest(dispatcher) {
+        val storedRow = snapshotHistory(emptyList(), listOf(track(1)), now).entries
+        val viewModel = viewModel(history = FakePlayHistory(storedRow))
+        advanceUntilIdle()
+        assertEquals(false, viewModel.state.value.showImportOffer)
+    }
+
+    @Test
+    fun successfulImportEndsTheOffer() = runTest(dispatcher) {
+        val viewModel = viewModel()
+        advanceUntilIdle()
+        viewModel.importHistory { "backup text" }
+        advanceUntilIdle()
+        assertEquals(false, viewModel.state.value.showImportOffer)
+    }
+
+    @Test
     fun initialScreenIsHome() = runTest(dispatcher) {
-        val viewModel = LibraryViewModel(largeLibrary, FakePlayHistory(), FakeAccess(AccessState.Ready), FakeMatcher(), FakeFileSizes(), settings, clock)
+        val viewModel = LibraryViewModel(largeLibrary, FakePlayHistory(), FakeAccess(AccessState.Ready), FakeMatcher(), FakeFileSizes(), settings, clock, FakeImportOffer())
         assertEquals(Screen.Home, viewModel.state.value.screen)
     }
 

@@ -6,7 +6,7 @@ import java.time.Instant
 /** [entries] is every row after the snapshot; [removed] are stored rows that were re-keyed to a new location. */
 data class HistorySnapshot(val entries: List<PlayHistoryEntry>, val removed: List<PlayHistoryEntry>)
 
-fun PlayerTrack.historyKey() = HistoryKey(folderPath.orEmpty(), fileName)
+fun PlayerTrack.historyKey() = HistoryKey(folderPath.orEmpty(), fileName, cueTitle = if (isCueTrack) title else "")
 
 /**
  * Folds the player's current counts into the [stored] rows.
@@ -14,7 +14,7 @@ fun PlayerTrack.historyKey() = HistoryKey(folderPath.orEmpty(), fileName)
  * A count lower than the last seen one means the player was reset, so the old count moves into carried plays.
  * A song at a new location takes over a stored row only when exactly one stored row (whose location is gone)
  * and exactly one new song share its title and artist; anything less certain starts a fresh row.
- * Songs that share one file location collapse to the one with the highest count.
+ * Songs that share one key (same file, and for cue tracks the same title) collapse to the one with the highest count.
  */
 fun snapshotHistory(stored: List<PlayHistoryEntry>, playerTracks: List<PlayerTrack>, now: Instant): HistorySnapshot {
     val storedByKey = stored.associateBy { it.historyKey() }
@@ -41,6 +41,7 @@ private fun advance(previous: PlayHistoryEntry?, track: PlayerTrack, now: Instan
     return PlayHistoryEntry(
         folderPath = track.folderPath.orEmpty(),
         fileName = track.fileName,
+        cueTitle = track.historyKey().cueTitle,
         title = track.title,
         artist = track.artist,
         album = track.album,
