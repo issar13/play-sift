@@ -3,6 +3,8 @@ package app.playsift.history
 import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import app.playsift.spotify.SpotifyMatchEntry
+import app.playsift.spotify.SpotifyPlaylistEntry
 import java.time.Instant
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -33,7 +35,15 @@ class PlayHistoryMigrationTest {
             .allowMainThreadQueries()
             .build()
         val rows = database.playHistoryDao().all().sortedBy { it.fileName }
+        val spotifyDao = database.spotifyDao()
+        spotifyDao.upsertPlaylist(SpotifyPlaylistEntry("top", "playlist-1", "https://open.spotify.com/playlist/playlist-1"))
+        spotifyDao.upsertMatch(SpotifyMatchEntry("primary/Music/", "a.mp3", "", "spotify:track:1", "A", "Artist", false, Instant.ofEpochMilli(5000)))
+        val storedPlaylist = spotifyDao.playlistFor("top")
+        val storedMatches = spotifyDao.allMatches()
         database.close()
+
+        assertEquals("playlist-1", storedPlaylist?.playlistId)
+        assertEquals(1, storedMatches.size)
 
         assertEquals(listOf("a.mp3", "b.mp3"), rows.map { it.fileName })
         assertEquals(listOf("", ""), rows.map { it.cueTitle })
