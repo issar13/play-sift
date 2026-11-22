@@ -21,6 +21,8 @@ data class PlayHistoryEntry(
     val updatedAt: Instant,
     /** The track title for a cue track, so tracks cut from one file stay separate rows; empty for an ordinary file. */
     val cueTitle: String = "",
+    /** When Play Sift moved this song's file to the trash; such a row is never relinked onto a new file. */
+    val trashedAt: Instant? = null,
 ) {
     val totalPlays: Int get() = carriedPlays + lastSeenPlayerCount
 }

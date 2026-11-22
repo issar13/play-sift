@@ -79,6 +79,11 @@ private class FakePlayHistory(var stored: List<PlayHistoryEntry> = emptyList()) 
     var exports = 0
     var importedText: String? = null
     var failure: Throwable? = null
+    val trashedTrackIds = mutableListOf<Long>()
+
+    override suspend fun markTrashed(tracks: List<PlayerTrack>) {
+        trashedTrackIds += tracks.map { it.id }
+    }
 
     override suspend fun exportNow() {
         failure?.let { throw it }
@@ -282,6 +287,20 @@ class LibraryViewModelTest {
         assertEquals(501L, second.currentBatch.first().track.id)
         viewModel.onBatchResult(resultOk = false)
         assertEquals(TrashFlow.Done(movedCount = 500, attemptedCount = 1000), viewModel.trashFlow.value)
+    }
+
+    @Test
+    fun onlyTheSongsOfAMovedBatchAreMarkedTrashedInHistory() = runTest(dispatcher) {
+        val history = FakePlayHistory()
+        val viewModel = viewModel(library = FakeLibrary((1L..1000L).map(::track)), history = history)
+        confirmedFlow(viewModel, 1000)
+        viewModel.confirmTrash()
+        viewModel.onBatchResult(resultOk = true)
+        advanceUntilIdle()
+        viewModel.onBatchResult(resultOk = false)
+        advanceUntilIdle()
+
+        assertEquals((1L..500L).toList(), history.trashedTrackIds)
     }
 
     @Test
@@ -723,6 +742,17 @@ class LibraryViewModelTest {
     }
 
     @Test
+    fun deleteScreenKnowsTheSizeOfEachSong() = runTest(dispatcher) {
+        val viewModel = viewModel(library = largeLibrary, fileSizes = FakeFileSizes(largeSizes), startScreen = Screen.Delete)
+        viewModel.setFileAccess(true)
+        advanceUntilIdle()
+
+        val expectedSizes = mapOf(1L to 1_000L, 2L to 10_000_000L, 3L to 16_000_000L)
+        assertTrue(viewModel.state.value.tracks.isNotEmpty())
+        assertEquals(viewModel.state.value.tracks.associate { it.id to expectedSizes.getValue(it.id) }, viewModel.state.value.sizesById)
+    }
+
+    @Test
     fun trashFromLargeUsesSelectedLargeSongs() = runTest(dispatcher) {
         val matcher = FakeMatcher()
         val viewModel = viewModel(library = largeLibrary, matcher = matcher, fileSizes = FakeFileSizes(largeSizes), startScreen = Screen.Large)
@@ -749,7 +779,7 @@ class LibraryViewModelTest {
     @Test
     fun listScreenDoesNotReadSizes() = runTest(dispatcher) {
         val fileSizes = FakeFileSizes(largeSizes)
-        val viewModel = viewModel(library = largeLibrary, fileSizes = fileSizes, startScreen = Screen.Delete)
+        val viewModel = viewModel(library = largeLibrary, fileSizes = fileSizes, startScreen = Screen.MostPlayed)
         viewModel.setFileAccess(true)
         advanceUntilIdle()
         assertEquals(0, fileSizes.reads)

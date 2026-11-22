@@ -50,6 +50,8 @@ class HistorySnapshotterTest {
 
         override suspend fun importFrom(json: String) = Unit
 
+        override suspend fun markTrashed(tracks: List<PlayerTrack>) = Unit
+
         override suspend fun isEmpty() = recorded == null
     }
 
@@ -91,6 +93,8 @@ class HistorySnapshotterTest {
         override suspend fun exportNow() = Unit
 
         override suspend fun importFrom(json: String) = Unit
+
+        override suspend fun markTrashed(tracks: List<PlayerTrack>) = Unit
 
         override suspend fun isEmpty() = stored.isEmpty()
     }

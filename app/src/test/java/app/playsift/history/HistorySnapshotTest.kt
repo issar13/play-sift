@@ -174,6 +174,17 @@ class HistorySnapshotTest {
     }
 
     @Test
+    fun aSongThatPlaySiftTrashedIsNeverRelinkedToANewFile() {
+        val trashedRow = entry(fileName = "old.mp3", lastSeenPlayerCount = 0, firstSeenAt = earlier).copy(trashedAt = later)
+
+        val snapshot = snapshotHistory(listOf(trashedRow), listOf(track(fileName = "new.mp3", firstSeenAt = now)), now)
+
+        assertEquals(setOf("old.mp3", "new.mp3"), snapshot.entries.map { it.fileName }.toSet())
+        assertEquals(now, snapshot.entries.single { it.fileName == "new.mp3" }.firstSeenAt)
+        assertEquals(emptyList<PlayHistoryEntry>(), snapshot.removed)
+    }
+
+    @Test
     fun blankTitleNeverRelinks() {
         val stored = listOf(entry(fileName = "old.mp3", title = "", artist = "", carriedPlays = 5))
 
