@@ -3,6 +3,7 @@ package app.playsift.history
 import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import app.playsift.player.PlayerTrack
 import java.time.Instant
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -56,6 +57,40 @@ class HistoryBackupTest {
         assertEquals(80, merged.lastSeenPlayerCount)
         assertEquals(5, merged.carriedPlays)
     }
+
+    @Test
+    fun importKeepsTheSideWithTheLargerTotalAsIs() {
+        val existing = listOf(entry(lastSeenPlayerCount = 2, carriedPlays = 40))
+        val imported = listOf(entry(lastSeenPlayerCount = 40, carriedPlays = 0))
+
+        val merged = mergeImported(existing, imported).single()
+
+        assertEquals(2, merged.lastSeenPlayerCount)
+        assertEquals(40, merged.carriedPlays)
+    }
+
+    @Test
+    fun importingTheSameFileAgainAfterAResetKeepsTheTotal() {
+        val oldFile = listOf(entry(lastSeenPlayerCount = 40))
+        val playerAfterReset = listOf(playerTrack(playCount = 2))
+        val afterFirstImport = mergeImported(listOf(entry(lastSeenPlayerCount = 2)), oldFile)
+        val afterSnapshot = snapshotHistory(afterFirstImport, playerAfterReset, now).entries
+
+        val afterSecondImport = mergeImported(afterSnapshot, oldFile)
+        val afterSecondSnapshot = snapshotHistory(afterSecondImport, playerAfterReset, now).entries
+        val afterThirdImport = mergeImported(afterSecondSnapshot, oldFile)
+        val afterThirdSnapshot = snapshotHistory(afterThirdImport, playerAfterReset, now).entries
+
+        assertEquals(42, afterSnapshot.single().totalPlays)
+        assertEquals(42, afterSecondSnapshot.single().totalPlays)
+        assertEquals(42, afterThirdSnapshot.single().totalPlays)
+    }
+
+    private fun playerTrack(playCount: Int) = PlayerTrack(
+        id = 1, title = "Song", artist = "Artist", album = "Album", fileName = "song.mp3", folderPath = "primary/Music/",
+        filePath = null, isCueTrack = false, isUserAdded = false, playCount = playCount, lastPlayedAt = null,
+        firstSeenAt = later, durationMillis = 1000,
+    )
 
     @Test
     fun importAddsSongsThatAreOnlyInTheFile() {

@@ -22,8 +22,9 @@ fun decodeHistory(json: String): List<PlayHistoryEntry> {
 }
 
 /**
- * Combines a backup file with the stored rows by location, taking the larger counts and the earliest first-seen date.
- * Larger counts keep the total right: the next snapshot treats a lower player count as a reset and carries the larger one.
+ * Combines a backup file with the stored rows by location. Each row keeps the side with the larger total plays
+ * (both counts from that one side), the earliest first-seen date and the latest last-played date.
+ * Merging on totals makes importing the same file again change nothing, even after the player reset in between.
  * Returns only the rows that the file touches.
  */
 fun mergeImported(existing: List<PlayHistoryEntry>, imported: List<PlayHistoryEntry>): List<PlayHistoryEntry> {
@@ -35,12 +36,13 @@ fun mergeImported(existing: List<PlayHistoryEntry>, imported: List<PlayHistoryEn
 
 private fun mergeRows(current: PlayHistoryEntry, incoming: PlayHistoryEntry): PlayHistoryEntry {
     val newer = if (incoming.updatedAt.isAfter(current.updatedAt)) incoming else current
+    val larger = if (incoming.totalPlays > current.totalPlays) incoming else current
     return current.copy(
         title = newer.title,
         artist = newer.artist,
         album = newer.album,
-        lastSeenPlayerCount = maxOf(current.lastSeenPlayerCount, incoming.lastSeenPlayerCount),
-        carriedPlays = maxOf(current.carriedPlays, incoming.carriedPlays),
+        lastSeenPlayerCount = larger.lastSeenPlayerCount,
+        carriedPlays = larger.carriedPlays,
         firstSeenAt = minOf(current.firstSeenAt, incoming.firstSeenAt),
         lastPlayedAt = listOfNotNull(current.lastPlayedAt, incoming.lastPlayedAt).maxOrNull(),
         updatedAt = newer.updatedAt,
