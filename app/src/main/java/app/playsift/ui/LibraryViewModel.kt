@@ -12,6 +12,8 @@ import app.playsift.files.TrackFile
 import app.playsift.files.TrackFileMatcher
 import app.playsift.files.trashBatches
 import app.playsift.history.PlayHistory
+import app.playsift.history.PlayHistoryEntry
+import app.playsift.history.inObservationOrder
 import app.playsift.history.roomPlayHistory
 import app.playsift.history.historySummary
 import app.playsift.history.mergeHistory
@@ -31,6 +33,7 @@ import app.playsift.settings.CutoffSettings
 import app.playsift.settings.DataStoreHistoryImportOffer
 import app.playsift.settings.HistoryImportOffer
 import app.playsift.settings.settingsDataStore
+import java.io.IOException
 import java.time.Clock
 import java.time.Instant
 import java.time.Period
@@ -142,9 +145,18 @@ class LibraryViewModel(
         }
     }
 
+    /** A failed write only leaves the offer pending, so it shows again on the next empty-store load. */
     fun dismissImportOffer() {
         mutableState.update { it.copy(showImportOffer = false) }
-        viewModelScope.launch { importOffer.markDone() }
+        viewModelScope.launch {
+            try {
+                importOffer.markDone()
+            } catch (exception: CancellationException) {
+                throw exception
+            } catch (_: IOException) {
+                // The offer is optional; nothing more to do.
+            }
+        }
     }
 
     private suspend fun messageAfter(success: UserMessage, failure: UserMessage, action: suspend () -> Unit): UserMessage =
@@ -210,6 +222,17 @@ class LibraryViewModel(
         }
     }
 
+    /** Songs a trash request refers to when they are not the open list (the Spotify result). Kept here so they survive the screen being recreated by the permission prompt. */
+    private var rememberedTrashCandidates: List<PlayerTrack>? = null
+
+    fun rememberTrashCandidates(candidates: List<PlayerTrack>?) {
+        rememberedTrashCandidates = candidates
+    }
+
+    /** Prepares the trash for [selectedIds] from the remembered candidates, or the open list when none were remembered. */
+    suspend fun prepareTrashForRemembered(selectedIds: Set<Long>): TrashPlan? =
+        prepareTrash(selectedIds, rememberedTrashCandidates ?: mutableState.value.tracks)
+
     fun confirmTrash() {
         val confirming = mutableTrashFlow.value as? TrashFlow.Confirming ?: return
         advanceTrash(confirming.plan.batches, movedCount = 0, attemptedCount = confirming.plan.removable.size)
@@ -271,9 +294,14 @@ class LibraryViewModel(
                 return
             }
             val now = clock.instant()
-            val playerTracks = library.tracks(LibraryList.AllTracks, current.cutoff.period, now)
-            val showImportOffer = importOffer.shouldOffer(storeWasEmpty = history.isEmpty())
-            val entries = history.record(playerTracks)
+            val observation = inObservationOrder {
+                val playerTracks = library.tracks(LibraryList.AllTracks, current.cutoff.period, now)
+                val storeWasEmpty = history.isEmpty()
+                Observation(playerTracks, storeWasEmpty, history.record(playerTracks))
+            }
+            val playerTracks = observation.playerTracks
+            val showImportOffer = shouldOfferImport(observation.storeWasEmpty)
+            val entries = observation.entries
             val allTracks = mergeHistory(playerTracks, entries)
             val summary = historySummary(allTracks, entries)
             val health = historyHealth(
@@ -318,6 +346,18 @@ class LibraryViewModel(
             }
         }
     }
+
+    private class Observation(val playerTracks: List<PlayerTrack>, val storeWasEmpty: Boolean, val entries: List<PlayHistoryEntry>)
+
+    /** The offer is optional: when its store cannot be read or written the offer is hidden for this load and the library loads anyway. */
+    private suspend fun shouldOfferImport(storeWasEmpty: Boolean): Boolean =
+        try {
+            importOffer.shouldOffer(storeWasEmpty)
+        } catch (exception: CancellationException) {
+            throw exception
+        } catch (_: IOException) {
+            false
+        }
 
     private class ScreenContent(
         val tracks: List<PlayerTrack>,

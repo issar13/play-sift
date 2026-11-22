@@ -47,7 +47,7 @@ fun SettingsScreen(
         }
         Text("Play history", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 24.dp))
         Text(
-            "Play Sift keeps its own copy of your play counts and saves it to Documents/PlaySift/play-history.json after every refresh.",
+            "Play Sift keeps its own copy of your play counts on this phone. It also tries to save a backup to Documents/PlaySift/play-history.json when it refreshes, but a refresh can fail to write it. Tap Export history now when you need a backup that is confirmed.",
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.padding(vertical = 8.dp),
         )

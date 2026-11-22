@@ -55,6 +55,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import app.playsift.R
+import app.playsift.history.readBackupText
 import app.playsift.player.PlayerTrack
 import app.playsift.spotify.SpotifyViewModel
 import app.playsift.spotify.notFoundShareText
@@ -113,7 +114,7 @@ fun PlaySiftApp(viewModel: LibraryViewModel, spotifyViewModel: SpotifyViewModel)
     val importHistoryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { backupUri ->
         backupUri?.let {
             viewModel.importHistory {
-                withContext(Dispatchers.IO) { context.contentResolver.openInputStream(backupUri)!!.bufferedReader().use { it.readText() } }
+                withContext(Dispatchers.IO) { context.contentResolver.openInputStream(backupUri)!!.use { stream -> readBackupText(stream) } }
             }
         }
     }
@@ -136,9 +137,8 @@ fun PlaySiftApp(viewModel: LibraryViewModel, spotifyViewModel: SpotifyViewModel)
     }
     val isPreparingTrash by viewModel.isPreparingTrash.collectAsState()
     var selectionAtPermissionRequest by rememberSaveable { mutableStateOf(longArrayOf()) }
-    var trashCandidates by remember { mutableStateOf<List<PlayerTrack>?>(null) }
     val prepareTrash = { selectedIds: Set<Long> ->
-        scope.launch { viewModel.prepareTrash(selectedIds, trashCandidates ?: state.tracks) }
+        scope.launch { viewModel.prepareTrashForRemembered(selectedIds) }
     }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
         viewModel.setFileAccess(isGranted)
@@ -157,7 +157,7 @@ fun PlaySiftApp(viewModel: LibraryViewModel, spotifyViewModel: SpotifyViewModel)
     }
 
     val moveToTrash: (Set<Long>, List<PlayerTrack>?) -> Unit = { selectionNow, candidates ->
-        trashCandidates = candidates
+        viewModel.rememberTrashCandidates(candidates)
         val hasPermission =
             ContextCompat.checkSelfPermission(context, mediaPermission) == PackageManager.PERMISSION_GRANTED
         when {
@@ -182,6 +182,7 @@ fun PlaySiftApp(viewModel: LibraryViewModel, spotifyViewModel: SpotifyViewModel)
         viewModel.showScreen(chipScreen)
     }
     val openTab: (AppTab) -> Unit = { tab ->
+        if (tab != AppTab.Spotify) spotifyViewModel.clearOffered()
         when (tab) {
             AppTab.Home -> viewModel.showScreen(Screen.Home)
             AppTab.Library -> viewModel.showScreen(libraryChip)
@@ -261,7 +262,10 @@ fun PlaySiftApp(viewModel: LibraryViewModel, spotifyViewModel: SpotifyViewModel)
         }
     }
 
-    BackHandler(enabled = state.screen != Screen.Home) { viewModel.showScreen(Screen.Home) }
+    BackHandler(enabled = state.screen != Screen.Home) {
+        spotifyViewModel.clearOffered()
+        viewModel.showScreen(Screen.Home)
+    }
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         viewModel.onResume()

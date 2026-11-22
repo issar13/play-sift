@@ -24,7 +24,7 @@ The **Home** tab is the start screen. It shows:
 
 Music players lose their play counts when their library is rebuilt (new phone, reinstall, cleared data). Play Sift keeps its own copy of every song's plays, notices when the player resets and carries the old plays forward. Every list shows the merged total.
 
-- The history is saved to `Documents/PlaySift/play-history.json` after every refresh, and once a day in the background. Copy the file to a new phone to keep your history.
+- Play Sift tries to save the history to `Documents/PlaySift/play-history.json` after every refresh, and once a day in the background; a failed write is not reported, so use **Export history now** in Settings when you need a confirmed backup. The new file is written completely before it replaces the old one, so a failed write keeps the previous backup. Copy the file to a new phone to keep your history.
 - **Settings** has **Export history now** and **Import history**. On a fresh install with no history, Home offers to import a saved file once.
 - If the old backup file belongs to an earlier install and cannot be overwritten, Play Sift writes a new one (for example `play-history (1).json`) and keeps using it.
 - Songs cut from one file with a cue sheet keep separate histories.
@@ -62,7 +62,7 @@ This needs your own free Spotify developer app (Client ID only, no password stor
 
 ## Privacy
 
-Everything stays on your phone. Play Sift needs no account and only reads your player's data; it never changes it. The only network use is the optional Spotify feature, which talks to Spotify alone and only after you sign in. Your Spotify sign-in tokens are stored encrypted with a key that never leaves your phone's Keystore.
+Play Sift keeps its data on your phone: it needs no account and only reads your player's data; it never changes it. One thing to know: the play history database is part of Android's app backup, so if device backup is turned on, Android can upload that history to your Google account (Google Drive) and copy it when you move to a new phone. Turn off device backup in Android's settings if you do not want that. The only network use is the optional Spotify feature, which talks to Spotify alone and only after you sign in. Your Spotify sign-in tokens are stored encrypted with a key that never leaves your phone's Keystore.
 
 ## Build
 

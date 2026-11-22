@@ -14,6 +14,7 @@ import app.playsift.player.Access
 import app.playsift.player.AccessState
 import app.playsift.player.HistoryHealth
 import app.playsift.history.PlayHistory
+import app.playsift.history.HistorySnapshotter
 import app.playsift.history.PlayHistoryEntry
 import app.playsift.history.snapshotHistory
 import app.playsift.player.Library
@@ -98,13 +99,16 @@ private class FakePlayHistory(var stored: List<PlayHistoryEntry> = emptyList()) 
 /** Follows the real first-run rule: the first answer sticks until [markDone]. */
 private class FakeImportOffer : HistoryImportOffer {
     var state: String? = null
+    var failure: Throwable? = null
 
     override suspend fun shouldOffer(storeWasEmpty: Boolean): Boolean {
+        failure?.let { throw it }
         if (state == null && storeWasEmpty) state = "pending"
         return state == "pending"
     }
 
     override suspend fun markDone() {
+        failure?.let { throw it }
         state = "done"
     }
 }
@@ -760,5 +764,84 @@ class LibraryViewModelTest {
         viewModel.refresh()
         advanceUntilIdle()
         assertEquals(null, viewModel.state.value.home)
+    }
+
+    @Test
+    fun aFailingOfferCheckStillLoadsTheLibraryAndRecordsHistory() = runTest(dispatcher) {
+        val importOffer = FakeImportOffer().apply { failure = IOException("datastore unreadable") }
+        val history = FakePlayHistory()
+        val viewModel = viewModel(history = history, importOffer = importOffer)
+        advanceUntilIdle()
+
+        assertEquals(false, viewModel.state.value.loadFailed)
+        assertEquals(3, viewModel.state.value.tracks.size)
+        assertEquals(false, viewModel.state.value.showImportOffer)
+        assertEquals(3, history.stored.size)
+    }
+
+    @Test
+    fun aFailedOfferWriteAfterDismissingDoesNotEscape() = runTest(dispatcher) {
+        val importOffer = FakeImportOffer()
+        val viewModel = viewModel(importOffer = importOffer)
+        advanceUntilIdle()
+        importOffer.failure = IOException("disk full")
+
+        viewModel.dismissImportOffer()
+        advanceUntilIdle()
+
+        assertEquals(false, viewModel.state.value.showImportOffer)
+        assertEquals(false, viewModel.state.value.loadFailed)
+    }
+
+    @Test
+    fun theSongsOfASpotifyResultAreRememberedForThePermissionRoundTrip() = runTest(dispatcher) {
+        val matcher = FakeMatcher()
+        val viewModel = viewModel(matcher = matcher)
+        advanceUntilIdle()
+        val offeredSong = track(50)
+
+        viewModel.rememberTrashCandidates(listOf(offeredSong))
+        val plan = viewModel.prepareTrashForRemembered(setOf(50L))!!
+
+        assertEquals(listOf(50L), plan.removable.map { it.track.id })
+    }
+
+    @Test
+    fun withoutRememberedCandidatesTheOpenListIsUsed() = runTest(dispatcher) {
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        val plan = viewModel.prepareTrashForRemembered(setOf(2L))!!
+
+        assertEquals(listOf(2L), plan.removable.map { it.track.id })
+    }
+
+    @Test
+    fun aForegroundLoadNeverRecordsAnOlderPlayerCountAfterANewerSnapshot() = runTest(dispatcher) {
+        val history = FakePlayHistory()
+        val gate = CompletableDeferred<Unit>()
+        val stepped = object : Library {
+            private val counts = ArrayDeque(listOf(5, 6))
+            private var isFirstRead = true
+
+            override suspend fun tracks(list: LibraryList, cutoff: Period, now: Instant): List<PlayerTrack> {
+                val tracksRead = listOf(track(1).copy(playCount = counts.removeFirst()))
+                if (isFirstRead) {
+                    isFirstRead = false
+                    gate.await()
+                }
+                return tracksRead
+            }
+        }
+        val viewModel = LibraryViewModel(stepped, history, FakeAccess(AccessState.Ready), FakeMatcher(), FakeFileSizes(), settings, clock, FakeImportOffer())
+        advanceUntilIdle()
+        val snapshot = async { HistorySnapshotter(FakeAccess(AccessState.Ready), stepped, history, clock).snapshot() }
+        advanceUntilIdle()
+        gate.complete(Unit)
+        snapshot.await()
+        advanceUntilIdle()
+
+        assertEquals(6, history.stored.single().totalPlays)
+        assertEquals(false, viewModel.state.value.loadFailed)
     }
 }

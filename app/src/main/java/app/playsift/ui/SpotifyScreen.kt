@@ -67,8 +67,8 @@ class SpotifyActions(
     val onPlaylistNameChange: (String) -> Unit,
     val onSend: () -> Unit,
     val onCancelSend: () -> Unit,
-    val onConfirmUnsure: () -> Unit,
-    val onSkipUnsure: () -> Unit,
+    val onConfirmUnsure: (trackId: Long) -> Unit,
+    val onSkipUnsure: (trackId: Long) -> Unit,
     val onOpenPlaylist: (String) -> Unit,
     val onToggleOffered: (Long) -> Unit,
     val onSelectAllOffered: () -> Unit,
@@ -151,7 +151,7 @@ private fun StageSection(state: SpotifyUiState, isPreparingTrash: Boolean, actio
             CircularProgressIndicator()
             Text("Making the playlist...")
         }
-        is SpotifyStage.Done -> DoneSection(stage, isPreparingTrash, actions)
+        is SpotifyStage.Done -> DoneSection(stage, state.isDeciding, isPreparingTrash, actions)
         is SpotifyStage.Failed -> {
             Text(stage.message, color = MaterialTheme.colorScheme.error)
             OutlinedButton(onClick = actions.onBackToSetup) { Text("Back") }
@@ -242,28 +242,33 @@ private fun SourceRadio(label: String, isSelected: Boolean, isEnabled: Boolean, 
 }
 
 @Composable
-private fun UnsureSection(unsure: UnsureSong, remaining: Int, actions: SpotifyActions) {
+private fun UnsureSection(unsure: UnsureSong, remaining: Int, isDeciding: Boolean, actions: SpotifyActions) {
     Text("Is this the same song? ($remaining left to check)", style = MaterialTheme.typography.titleMedium)
     Text("Yours: ${unsure.track.title} by ${unsure.track.artist}")
     Text("On Spotify: ${unsure.candidate.title} by ${unsure.candidate.artists.joinToString(", ")}")
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Button(onClick = actions.onConfirmUnsure) { Text("Add it") }
-        OutlinedButton(onClick = actions.onSkipUnsure) { Text("Skip") }
+        Button(onClick = { actions.onConfirmUnsure(unsure.track.id) }, enabled = !isDeciding) { Text("Add it") }
+        OutlinedButton(onClick = { actions.onSkipUnsure(unsure.track.id) }, enabled = !isDeciding) { Text("Skip") }
     }
     TextButton(onClick = { actions.onOpenPicker(unsure.track) }) { Text("See more options") }
 }
 
 @Composable
-private fun DoneSection(done: SpotifyStage.Done, isPreparingTrash: Boolean, actions: SpotifyActions) {
+private fun DoneSection(done: SpotifyStage.Done, isDeciding: Boolean, isPreparingTrash: Boolean, actions: SpotifyActions) {
     val result = done.result
     val confirmedCount = result.added.count { it.wasConfirmedByUser }
-    Text(if (result.playlist == null) "Songs to check" else "Playlist ready", style = MaterialTheme.typography.titleLarge)
+    val heading = when {
+        result.playlist != null -> "Playlist ready"
+        done.unsure.isEmpty() && result.added.isEmpty() -> "No songs matched, so no playlist was made"
+        else -> "Songs to check"
+    }
+    Text(heading, style = MaterialTheme.typography.titleLarge)
     Text("Matched: ${result.added.size - confirmedCount}")
     Text("Added after you confirmed: $confirmedCount")
     Text("Skipped as unsure: ${result.skippedUnsure.size}")
     if (result.notFound.isEmpty()) Text("Not found: 0") else NotFoundSection(result.notFound, actions)
     result.playlist?.let { playlist -> Button(onClick = { actions.onOpenPlaylist(playlist.url) }) { Text("Open in Spotify") } }
-    done.unsure.firstOrNull()?.let { unsure -> UnsureSection(unsure, done.unsure.size, actions) }
+    done.unsure.firstOrNull()?.let { unsure -> UnsureSection(unsure, done.unsure.size, isDeciding, actions) }
     OfferSection(done, isPreparingTrash, actions)
     OutlinedButton(onClick = actions.onBackToSetup) { Text("Done") }
 }

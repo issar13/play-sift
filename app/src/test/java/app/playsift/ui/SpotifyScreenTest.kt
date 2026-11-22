@@ -11,6 +11,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import app.playsift.player.PlayerTrack
@@ -23,6 +24,7 @@ import app.playsift.spotify.SpotifyStage
 import app.playsift.spotify.SpotifyTrack
 import app.playsift.spotify.spotifyTrack
 import app.playsift.spotify.SpotifyUiState
+import app.playsift.spotify.UnsureSong
 import app.playsift.spotify.topCountTextFrom
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -55,10 +57,12 @@ class SpotifyScreenTest {
         onOpenPicker: (PlayerTrack) -> Unit = {},
         onPickOption: (SpotifyTrack) -> Unit = {},
         onClosePicker: () -> Unit = {},
+        onConfirmUnsure: (Long) -> Unit = {},
+        onSkipUnsure: (Long) -> Unit = {},
     ) = SpotifyActions(
         onSignIn = {}, onSignOut = {}, onClientIdChange = {}, onChooseSource = {},
         onTopCountTextChange = onTopCountTextChange, onUseAllPlayedCount = onUseAllPlayedCount,
-        onPlaylistNameChange = {}, onSend = {}, onCancelSend = {}, onConfirmUnsure = {}, onSkipUnsure = {},
+        onPlaylistNameChange = {}, onSend = {}, onCancelSend = {}, onConfirmUnsure = onConfirmUnsure, onSkipUnsure = onSkipUnsure,
         onOpenPlaylist = {}, onToggleOffered = {}, onSelectAllOffered = {}, onMoveToTrash = {}, onBackToSetup = {},
         onSearchOnSpotify = onSearchOnSpotify, onShareNotFound = onShareNotFound,
         onOpenPicker = onOpenPicker, onPickOption = onPickOption, onClosePicker = onClosePicker,
@@ -236,5 +240,52 @@ class SpotifyScreenTest {
         showPicker(PickerState(notFoundSong, isLoading = false, errorMessage = "Spotify is busy right now. Try again in a minute."))
 
         composeRule.onNodeWithText("Spotify is busy right now. Try again in a minute.").assertIsDisplayed()
+    }
+
+    private val unsureSong = UnsureSong(songTrack(9, title = "Maybe"), spotifyTrack("Maybe", durationMillis = 90_000))
+
+    private fun showUnsure(isDeciding: Boolean, onConfirmUnsure: (Long) -> Unit = {}, onSkipUnsure: (Long) -> Unit = {}) = composeRule.setContent {
+        val result = SendResult(SpotifyPlaylist("p1", "url"), added = emptyList(), skippedUnsure = emptyList(), notFound = emptyList())
+        SpotifyScreen(
+            state = setupState.copy(stage = SpotifyStage.Done(result, listOf(unsureSong), offer = emptyList(), selectedIds = emptySet()), isDeciding = isDeciding),
+            isPreparingTrash = false,
+            actions = actions(onConfirmUnsure = onConfirmUnsure, onSkipUnsure = onSkipUnsure),
+        )
+    }
+
+    @Test
+    fun theDecisionButtonsNameTheSongOnScreen() {
+        var confirmed: Long? = null
+        var skipped: Long? = null
+        showUnsure(isDeciding = false, onConfirmUnsure = { confirmed = it }, onSkipUnsure = { skipped = it })
+
+        composeRule.onNodeWithText("Add it").performScrollTo().performClick()
+        composeRule.onNodeWithText("Skip").performScrollTo().performClick()
+
+        assertEquals(9L, confirmed)
+        assertEquals(9L, skipped)
+    }
+
+    @Test
+    fun theDecisionButtonsAreDisabledWhileADecisionIsBeingSaved() {
+        showUnsure(isDeciding = true)
+
+        composeRule.onNodeWithText("Add it").assertIsNotEnabled()
+        composeRule.onNodeWithText("Skip").assertIsNotEnabled()
+    }
+
+    @Test
+    fun aSendWhereNothingMatchedStillListsTheNotFoundSongs() {
+        composeRule.setContent {
+            val result = SendResult(null, added = emptyList(), skippedUnsure = emptyList(), notFound = listOf(notFoundSong))
+            SpotifyScreen(
+                state = setupState.copy(stage = SpotifyStage.Done(result, unsure = emptyList(), offer = emptyList(), selectedIds = emptySet())),
+                isPreparingTrash = false,
+                actions = actions(),
+            )
+        }
+
+        composeRule.onNodeWithText("No songs matched, so no playlist was made").assertIsDisplayed()
+        composeRule.onNodeWithText("Not found (1)").assertIsDisplayed()
     }
 }
