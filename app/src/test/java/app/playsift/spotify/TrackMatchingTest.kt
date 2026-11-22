@@ -92,4 +92,61 @@ class TrackMatchingTest {
 
         assertEquals(MatchResult.Unsure::class, result::class)
     }
+
+    @Test
+    fun liveVersionOfAStudioTrackIsOnlyUnsure() {
+        val live = songTrack(3, title = "Halo (Live at Wembley)", artist = "New Order", durationMillis = 450_000)
+
+        val result = matchTrack(live, listOf(candidate(title = "Halo")))
+
+        assertEquals(MatchResult.Unsure::class, result::class)
+    }
+
+    @Test
+    fun studioTrackAgainstALiveResultIsOnlyUnsure() {
+        val studio = songTrack(3, title = "Halo", artist = "New Order", durationMillis = 450_000)
+
+        val result = matchTrack(studio, listOf(candidate(title = "Halo - Live")))
+
+        assertEquals(MatchResult.Unsure::class, result::class)
+    }
+
+    @Test
+    fun differentVersionWordsAreOnlyUnsure() {
+        val remix = songTrack(3, title = "Halo (Remix)", artist = "New Order", durationMillis = 450_000)
+
+        val result = matchTrack(remix, listOf(candidate(title = "Halo (Acoustic)")))
+
+        assertEquals(MatchResult.Unsure::class, result::class)
+    }
+
+    @Test
+    fun theSameVersionWordOnBothSidesStillMatches() {
+        val live = songTrack(3, title = "Halo (Live)", artist = "New Order", durationMillis = 450_000)
+
+        val result = matchTrack(live, listOf(candidate(title = "Halo [Live]")))
+
+        assertEquals(MatchResult.Matched::class, result::class)
+    }
+
+    @Test
+    fun remasteredNoteStillMatchesTheStudioTrack() {
+        val remastered = songTrack(3, title = "Halo (Remastered)", artist = "New Order", durationMillis = 450_000)
+
+        assertEquals(MatchResult.Matched::class, matchTrack(remastered, listOf(candidate(title = "Halo")))::class)
+    }
+
+    @Test
+    fun featuredArtistNoteStillMatchesTheStudioTrack() {
+        val featuring = songTrack(3, title = "Song (feat. A)", artist = "New Order", durationMillis = 450_000)
+
+        assertEquals(MatchResult.Matched::class, matchTrack(featuring, listOf(candidate(title = "Song")))::class)
+    }
+
+    @Test
+    fun explicitTagStillMatches() {
+        val explicit = songTrack(3, title = "Song [Explicit]", artist = "New Order", durationMillis = 450_000)
+
+        assertEquals(MatchResult.Matched::class, matchTrack(explicit, listOf(candidate(title = "Song")))::class)
+    }
 }
