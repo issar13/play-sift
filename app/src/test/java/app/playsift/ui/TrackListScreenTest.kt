@@ -76,6 +76,27 @@ class TrackListScreenTest {
     }
 
     @Test
+    fun mostPlayedActionBarOffersSendToSpotifyOnly() {
+        show(state(list = LibraryList.MostPlayed, selectedIds = setOf(1L, 2L)))
+        composeRule.onNodeWithText("Send 2 to Spotify").assertIsEnabled()
+        composeRule.onNodeWithText("Move 2 to trash").assertDoesNotExist()
+    }
+
+    @Test
+    fun neverPlayedActionBarOffersSendToSpotifyOnly() {
+        show(state(list = LibraryList.NeverPlayed, selectedIds = setOf(1L)))
+        composeRule.onNodeWithText("Send 1 to Spotify").assertIsEnabled()
+        composeRule.onNodeWithText("Move 1 to trash").assertDoesNotExist()
+    }
+
+    @Test
+    fun deleteActionBarKeepsBothButtons() {
+        show(state(selectedIds = setOf(1L)))
+        composeRule.onNodeWithText("Send 1 to Spotify").assertIsEnabled()
+        composeRule.onNodeWithText("Move 1 to trash").assertIsEnabled()
+    }
+
+    @Test
     fun bannerShownWhenMostlyUnplayed() {
         show(state(list = LibraryList.NeverPlayed, health = HistoryHealth.MostlyUnplayed))
         composeRule.onNodeWithText(

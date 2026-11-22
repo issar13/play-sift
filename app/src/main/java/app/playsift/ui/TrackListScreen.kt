@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -28,6 +29,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.playsift.player.HistoryHealth
 import app.playsift.player.LibraryList
@@ -71,32 +73,36 @@ fun TrackListScreen(
                 }
             }
         }
-        SendToSpotifyButton(selectedCount = state.selectedIds.size, onClick = onSendToSpotify)
-        if (isDeleteList) {
-            Button(
-                onClick = onMoveToTrash,
-                enabled = state.selectedIds.isNotEmpty() && !isPreparingTrash,
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError),
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
-            ) {
-                if (isPreparingTrash) {
-                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                } else {
-                    Text("Move ${state.selectedIds.size} to trash")
+        Surface(color = MaterialTheme.colorScheme.surfaceContainer, tonalElevation = 3.dp) {
+            Column {
+                SendToSpotifyButton(selectedCount = state.selectedIds.size, isPrimaryAction = !isDeleteList, onClick = onSendToSpotify)
+                if (isDeleteList) {
+                    Button(
+                        onClick = onMoveToTrash,
+                        enabled = state.selectedIds.isNotEmpty() && !isPreparingTrash,
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError),
+                        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                    ) {
+                        if (isPreparingTrash) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        } else {
+                            Text("Move ${state.selectedIds.size} to trash")
+                        }
+                    }
                 }
             }
         }
     }
 }
 
+/** The one action on Most played and Never played, so it is the filled violet button there; beside the red trash button it is outlined. */
 @Composable
-internal fun SendToSpotifyButton(selectedCount: Int, onClick: () -> Unit) {
-    OutlinedButton(
-        onClick = onClick,
-        enabled = selectedCount > 0,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-    ) {
-        Text("Send $selectedCount to Spotify")
+internal fun SendToSpotifyButton(selectedCount: Int, isPrimaryAction: Boolean, onClick: () -> Unit) {
+    val modifier = Modifier.fillMaxWidth().padding(16.dp)
+    if (isPrimaryAction) {
+        Button(onClick = onClick, enabled = selectedCount > 0, modifier = modifier) { Text("Send $selectedCount to Spotify") }
+    } else {
+        OutlinedButton(onClick = onClick, enabled = selectedCount > 0, modifier = modifier) { Text("Send $selectedCount to Spotify") }
     }
 }
 
@@ -160,7 +166,7 @@ private fun HistoryBanner(health: HistoryHealth, cutoffLabel: String) {
         HistoryHealth.MostlyUnplayed ->
             "Almost nothing has a play count. If you reset your player's library, play counts started over."
     }
-    Surface(color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.fillMaxWidth()) {
+    Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.large, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
         Text(text = message, modifier = Modifier.padding(16.dp), style = MaterialTheme.typography.bodyMedium)
     }
 }
@@ -175,16 +181,27 @@ internal fun TrackRow(
     sizeBytes: Long? = null,
 ) {
     Row(
-        modifier = Modifier.toggleable(value = isSelected, role = Role.Checkbox, onValueChange = { onToggleSelected() }).fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        modifier = Modifier.toggleable(value = isSelected, role = Role.Checkbox, onValueChange = { onToggleSelected() }).fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Checkbox(checked = isSelected, onCheckedChange = null)
+        ArtworkTile(label = track.title, colorSeed = track.artist)
         Column(modifier = Modifier.weight(1f)) {
-            Text(text = track.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1)
-            Text(text = track.artist, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+            Text(text = track.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                text = track.artist,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
-        Text(text = rowTrailingText(track, list, today, sizeBytes), style = MaterialTheme.typography.bodySmall)
+        Text(
+            text = rowTrailingText(track, list, today, sizeBytes),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

@@ -1,44 +1,51 @@
 package app.playsift.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
 
-/** Violet is the one brand colour, everything else is neutral, and error red is kept for deleting. */
-private val lightScheme = lightColorScheme(
-    primary = Color(0xFF534AB7),
-    onPrimary = Color(0xFFFFFFFF),
-    primaryContainer = Color(0xFFEEEDFE),
-    onPrimaryContainer = Color(0xFF3C3489),
-    background = Color(0xFFFAFAF8),
-    onBackground = Color(0xFF1C1C1A),
-    surface = Color(0xFFFAFAF8),
-    onSurface = Color(0xFF1C1C1A),
-    surfaceVariant = Color(0xFFEDEDEA),
-    onSurfaceVariant = Color(0xFF5B5B57),
-    secondaryContainer = Color(0xFFEDEDEA),
-    onSecondaryContainer = Color(0xFF1C1C1A),
+/** Near-black surfaces with violet as the one brand colour; error red is kept for deleting. Dark is the only theme for now. */
+internal val playSiftColorScheme = darkColorScheme(
+    primary = Color(0xFF8B7FF0),
+    onPrimary = Color(0xFF0E0D12),
+    primaryContainer = Color(0xFF2B2650),
+    onPrimaryContainer = Color(0xFFE6E2FF),
+    secondary = Color(0xFF8B7FF0),
+    onSecondary = Color(0xFF0E0D12),
+    secondaryContainer = Color(0xFF2B2650),
+    onSecondaryContainer = Color(0xFFE6E2FF),
+    tertiary = Color(0xFF8B7FF0),
+    onTertiary = Color(0xFF0E0D12),
+    background = Color(0xFF0E0D12),
+    onBackground = Color(0xFFEDEBF5),
+    surface = Color(0xFF17161D),
+    onSurface = Color(0xFFEDEBF5),
+    surfaceVariant = Color(0xFF201F28),
+    onSurfaceVariant = Color(0xFFA09DB0),
+    surfaceContainerLowest = Color(0xFF0E0D12),
+    surfaceContainerLow = Color(0xFF131218),
+    surfaceContainer = Color(0xFF17161D),
+    surfaceContainerHigh = Color(0xFF201F28),
+    surfaceContainerHighest = Color(0xFF282732),
+    outline = Color(0xFF6F6C80),
+    outlineVariant = Color(0xFF36343F),
+    error = Color(0xFFF2766B),
+    onError = Color(0xFF0E0D12),
+    errorContainer = Color(0xFF3A1714),
+    onErrorContainer = Color(0xFFFBD9D5),
 )
 
-private val darkScheme = darkColorScheme(
-    primary = Color(0xFFAFA9EC),
-    onPrimary = Color(0xFF26215C),
-    primaryContainer = Color(0xFF3C3489),
-    onPrimaryContainer = Color(0xFFEEEDFE),
-    background = Color(0xFF131312),
-    onBackground = Color(0xFFE6E6E3),
-    surface = Color(0xFF131312),
-    onSurface = Color(0xFFE6E6E3),
-    surfaceVariant = Color(0xFF2A2A28),
-    onSurfaceVariant = Color(0xFFB9B9B5),
-    secondaryContainer = Color(0xFF2A2A28),
-    onSecondaryContainer = Color(0xFFE6E6E3),
+private val playSiftShapes = Shapes(
+    small = RoundedCornerShape(12.dp),
+    medium = RoundedCornerShape(16.dp),
+    large = RoundedCornerShape(20.dp),
 )
 
 @Composable
 fun PlaySiftTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkScheme else lightScheme, content = content)
+    MaterialTheme(colorScheme = playSiftColorScheme, shapes = playSiftShapes, content = content)
 }

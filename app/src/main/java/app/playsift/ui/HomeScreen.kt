@@ -1,9 +1,17 @@
 package app.playsift.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -47,31 +55,31 @@ fun HomeScreen(
     val summary = state.home ?: return
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         if (state.showImportOffer) ImportOfferBanner(onImportHistory, onDismissImportOffer)
         HeaderBand(summary)
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.height(IntrinsicSize.Min)) {
             SummaryCard(
                 title = "Played",
                 value = summary.playedSongs.toString(),
                 detail = null,
                 containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                contentColor = MaterialTheme.colorScheme.onSurface,
                 testTag = "playedCard",
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).fillMaxHeight(),
             )
             SummaryCard(
                 title = "Never played",
                 value = summary.neverPlayedSongs.toString(),
                 detail = null,
                 containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                contentColor = MaterialTheme.colorScheme.onSurface,
                 testTag = "neverPlayedCard",
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).fillMaxHeight(),
             )
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.height(IntrinsicSize.Min)) {
             SummaryCard(
                 title = "Delete candidates",
                 value = summary.deleteCandidates.toString(),
@@ -79,7 +87,7 @@ fun HomeScreen(
                 containerColor = MaterialTheme.colorScheme.errorContainer,
                 contentColor = MaterialTheme.colorScheme.onErrorContainer,
                 testTag = "deleteCard",
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).fillMaxHeight(),
                 onClick = onOpenDelete,
             )
             SummaryCard(
@@ -87,9 +95,9 @@ fun HomeScreen(
                 value = summary.largeSongs?.toString() ?: if (state.hasFileAccess) "Sizes unavailable" else "Allow file access",
                 detail = summary.largeSongsSizeBytes?.let(::megabytesText),
                 containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                contentColor = MaterialTheme.colorScheme.onSurface,
                 testTag = "largeCard",
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).fillMaxHeight(),
                 onClick = if (state.hasFileAccess) onOpenLarge else onAllowFileAccess,
             )
         }
@@ -100,21 +108,37 @@ fun HomeScreen(
 @Composable
 private fun HeaderBand(summary: HomeSummary) {
     val playedFraction = if (summary.totalSongs == 0) 0f else summary.playedSongs.toFloat() / summary.totalSongs
-    Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = MaterialTheme.shapes.large, modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Surface(color = MaterialTheme.colorScheme.surface, shape = MaterialTheme.shapes.large, modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
                 text = if (summary.totalSongs == 1) "1 song" else "${summary.totalSongs} songs",
-                style = MaterialTheme.typography.headlineMedium,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                style = MaterialTheme.typography.displaySmall,
+                fontWeight = FontWeight.Bold,
             )
             summary.librarySizeBytes?.let { librarySizeBytes ->
-                Text("${megabytesText(librarySizeBytes)} in known files", color = MaterialTheme.colorScheme.onPrimaryContainer)
+                Text(
+                    text = "${megabytesText(librarySizeBytes)} in known files",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
-            LinearProgressIndicator(progress = { playedFraction }, modifier = Modifier.fillMaxWidth())
+            summary.trackingSince?.let { trackingSince ->
+                Text(
+                    text = "Tracking since ${historyDateFormat.format(trackingSince)}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            LinearProgressIndicator(
+                progress = { playedFraction },
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp).height(8.dp).clip(RoundedCornerShape(4.dp)),
+            )
             Text(
                 text = "${summary.playedSongs} played, ${summary.neverPlayedSongs} never played",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
@@ -133,12 +157,13 @@ private fun SummaryCard(
 ) {
     val tappable = if (onClick == null) modifier else modifier.clickable(onClick = onClick)
     Card(
+        shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = containerColor, contentColor = contentColor),
         modifier = tappable.testTag(testTag).semantics { cardContainerColor = containerColor },
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(title, style = MaterialTheme.typography.labelLarge)
-            Text(value, style = MaterialTheme.typography.titleLarge)
+            Text(value, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             detail?.let { detailText -> Text(detailText, style = MaterialTheme.typography.bodySmall) }
         }
     }
@@ -146,16 +171,25 @@ private fun SummaryCard(
 
 @Composable
 private fun Highlights(summary: HomeSummary) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Highlights", style = MaterialTheme.typography.titleMedium)
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(top = 8.dp)) {
+        Text("Highlights", style = MaterialTheme.typography.titleLarge)
         summary.mostPlayed?.let { track ->
-            Text("Most played song: ${track.title} by ${track.artist} (${pluralPlays(track.playCount)})")
+            HighlightRow(label = "Most played song", name = track.title, detail = "${track.artist} \u00b7 ${pluralPlays(track.playCount)}", colorSeed = track.artist)
         }
         summary.topArtist?.let { artistPlays ->
-            Text("Top artist: ${artistPlays.artist} (${pluralPlays(artistPlays.plays)})")
+            HighlightRow(label = "Top artist", name = artistPlays.artist, detail = pluralPlays(artistPlays.plays), colorSeed = artistPlays.artist)
         }
-        summary.trackingSince?.let { trackingSince ->
-            Text("Tracking since ${historyDateFormat.format(trackingSince)}")
+    }
+}
+
+@Composable
+private fun HighlightRow(label: String, name: String, detail: String, colorSeed: String) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        ArtworkTile(label = name, colorSeed = colorSeed, size = 56.dp)
+        Column {
+            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -164,7 +198,7 @@ private fun pluralPlays(plays: Int) = if (plays == 1) "1 play" else "$plays play
 
 @Composable
 private fun ImportOfferBanner(onImport: () -> Unit, onDismiss: () -> Unit) {
-    Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.large, modifier = Modifier.fillMaxWidth()) {
+    Surface(color = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer, shape = MaterialTheme.shapes.large, modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Play Sift has no saved history yet. If you saved a play-history file from an earlier install, import it to bring your play counts back.")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

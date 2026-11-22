@@ -93,8 +93,11 @@ class HomeScreenTest {
         composeRule.onNodeWithText("12").assertExists()
         composeRule.onNodeWithText("48.0 MB in known files").assertExists()
         composeRule.onNodeWithText("21.5 MB").assertExists()
-        composeRule.onNodeWithText("Most played song: Blue Monday by New Order (7 plays)").assertExists()
-        composeRule.onNodeWithText("Top artist: New Order (15 plays)").assertExists()
+        composeRule.onNodeWithText("Blue Monday").assertExists()
+        composeRule.onNodeWithText("New Order \u00b7 7 plays").assertExists()
+        composeRule.onNodeWithText("Top artist").assertExists()
+        composeRule.onNodeWithText("15 plays").assertExists()
+        composeRule.onNodeWithText("Tracking since", substring = true).assertExists()
     }
 
     @Test

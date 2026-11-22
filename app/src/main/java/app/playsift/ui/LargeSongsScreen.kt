@@ -11,6 +11,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -49,20 +50,24 @@ fun LargeSongsScreen(
                 )
             }
         }
-        SendToSpotifyButton(selectedCount = state.selectedIds.size, onClick = onSendToSpotify)
-        Button(
-            onClick = onMoveToTrash,
-            enabled = state.selectedIds.isNotEmpty() && !isPreparingTrash,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.error,
-                contentColor = MaterialTheme.colorScheme.onError,
-            ),
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-        ) {
-            if (isPreparingTrash) {
-                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-            } else {
-                Text("Move ${state.selectedIds.size} to trash (${megabytesText(selectedSizeBytes)})")
+        Surface(color = MaterialTheme.colorScheme.surfaceContainer, tonalElevation = 3.dp) {
+            Column {
+                SendToSpotifyButton(selectedCount = state.selectedIds.size, isPrimaryAction = false, onClick = onSendToSpotify)
+                Button(
+                    onClick = onMoveToTrash,
+                    enabled = state.selectedIds.isNotEmpty() && !isPreparingTrash,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError,
+                    ),
+                    modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                ) {
+                    if (isPreparingTrash) {
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    } else {
+                        Text("Move ${state.selectedIds.size} to trash (${megabytesText(selectedSizeBytes)})")
+                    }
+                }
             }
         }
     }
