@@ -16,8 +16,13 @@ fun songTrack(
     firstSeenAt = Instant.parse("2024-01-01T00:00:00Z"), durationMillis = durationMillis,
 )
 
-fun spotifyTrack(title: String, artist: String = "Artist", durationMillis: Long = 200_000, uri: String = "spotify:track:${title.replace(' ', '-')}") =
-    SpotifyTrack(uri = uri, title = title, artists = listOf(artist), durationMillis = durationMillis)
+fun spotifyTrack(
+    title: String,
+    artist: String = "Artist",
+    durationMillis: Long = 200_000,
+    uri: String = "spotify:track:${title.replace(' ', '-')}",
+    album: String = "",
+) = SpotifyTrack(uri = uri, title = title, artists = listOf(artist), durationMillis = durationMillis, album = album)
 
 /** Answers searches from [catalogue] keyed by the searched title and records every call. No network. */
 open class FakeSpotifyApi(var catalogue: Map<String, List<SpotifyTrack>> = emptyMap()) : SpotifyApi {
@@ -27,6 +32,9 @@ open class FakeSpotifyApi(var catalogue: Map<String, List<SpotifyTrack>> = empty
     val addCalls = mutableListOf<Pair<String, List<String>>>()
     var deletedPlaylistIds = setOf<String>()
     var failure: Exception? = null
+    /** Answers [searchOptions] by the exact query text; every query asked is recorded in [optionQueriesAsked]. */
+    var optionResults: Map<String, List<SpotifyTrack>> = emptyMap()
+    val optionQueriesAsked = mutableListOf<String>()
     var beforeSearch: suspend (title: String) -> Unit = {}
 
     override suspend fun searchTracks(title: String, artist: String): List<SpotifyTrack> {
@@ -34,6 +42,12 @@ open class FakeSpotifyApi(var catalogue: Map<String, List<SpotifyTrack>> = empty
         beforeSearch(title)
         searchedTitles += title
         return catalogue[title].orEmpty()
+    }
+
+    override suspend fun searchOptions(query: String): List<SpotifyTrack> {
+        failure?.let { throw it }
+        optionQueriesAsked += query
+        return optionResults[query].orEmpty()
     }
 
     override suspend fun currentUserName() = "Test User"

@@ -60,6 +60,7 @@ fun failedSend(request: SendRequest, message: String) =
 
 private const val STATUS_UNAUTHORIZED = 401
 private const val STATUS_FORBIDDEN = 403
+private const val STATUS_TOO_MANY_REQUESTS = 429
 
 private const val SIGNED_OUT_TEXT = "Spotify no longer accepts the sign-in. Sign out and sign in again."
 
@@ -71,5 +72,6 @@ fun failureText(exception: Exception): String =
         exception.status == STATUS_UNAUTHORIZED -> SIGNED_OUT_TEXT
         exception.status == STATUS_FORBIDDEN ->
             "Spotify refused the request. Make sure your account is added to the app in the Spotify developer dashboard."
+        exception.status == STATUS_TOO_MANY_REQUESTS -> "Spotify is busy right now. Try again in a minute."
         else -> "Spotify answered with an error (${exception.status}). Try again in a minute."
     }

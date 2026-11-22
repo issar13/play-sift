@@ -4,6 +4,7 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import app.playsift.files.FileLocation
 import app.playsift.files.FileSizes
 import app.playsift.player.PlayerTrack
+import kotlinx.coroutines.flow.first
 import java.io.File
 import java.time.Clock
 import java.time.Instant
@@ -51,7 +52,7 @@ class SpotifyViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun viewModel(builtInClientId: String = "built-in"): SpotifyViewModel {
+    private fun viewModel(builtInClientId: String = "built-in", spotifyApi: SpotifyApi = api): SpotifyViewModel {
         val dataStore = PreferenceDataStoreFactory.create(scope = dataStoreScope) { File(folder.root, "settings.preferences_pb") }
         val clientId = SpotifyClientId(dataStore, builtInClientId)
         val fileSizes = object : FileSizes {
@@ -61,9 +62,9 @@ class SpotifyViewModelTest {
             session = SpotifySession(tokenStore, accounts, clientId::effective, clock),
             tokenStore = tokenStore,
             clientId = clientId,
-            api = api,
-            matcher = SongMatcher(api, dao, clock),
-            publisher = PlaylistPublisher(api, dao),
+            api = spotifyApi,
+            matcher = SongMatcher(spotifyApi, dao, clock),
+            publisher = PlaylistPublisher(spotifyApi, dao),
             fileSizes = fileSizes,
             store = store,
             scheduler = scheduler,
@@ -407,5 +408,151 @@ class SpotifyViewModelTest {
         advanceUntilIdle()
 
         assertEquals("42", viewModel.state.value.topCountText)
+    }
+
+    private val lostSong = songTrack(3, title = "Lost", durationMillis = 100_000)
+    private val liveOption = spotifyTrack("Lost - Live", durationMillis = 172_000, album = "Live Album")
+    private val studioOption = spotifyTrack("Lost")
+
+    private suspend fun showPickerFor(track: PlayerTrack, saved: SavedSend, options: List<SpotifyTrack> = listOf(liveOption, studioOption)): SpotifyViewModel {
+        store.save(saved)
+        api.optionResults = mapOf(optionQueries(track).first() to options)
+        val viewModel = viewModel()
+        dispatcher.scheduler.advanceUntilIdle()
+        viewModel.openPicker(track)
+        dispatcher.scheduler.advanceUntilIdle()
+        return viewModel
+    }
+
+    @Test
+    fun openingThePickerLoadsTheOptions() = runTest(dispatcher) {
+        val viewModel = showPickerFor(lostSong, savedSend(added = listOf(matchedSong(1, "One")), notFound = listOf(lostSong)))
+
+        val picker = viewModel.state.value.picker!!
+        assertEquals(lostSong, picker.track)
+        assertEquals(listOf("Lost - Live", "Lost"), picker.options.map { it.title })
+        assertEquals(false, picker.isLoading)
+    }
+
+    @Test
+    fun pickingAnOptionAppendsToThePlaylistInsteadOfReplacingIt() = runTest(dispatcher) {
+        val viewModel = showPickerFor(lostSong, savedSend(added = listOf(matchedSong(1, "One")), notFound = listOf(lostSong, songTrack(4))))
+
+        viewModel.pickOption(liveOption)
+        advanceUntilIdle()
+
+        assertEquals(listOf("playlist-1" to listOf(liveOption.uri)), api.addCalls)
+        assertTrue(api.replaceCalls.isEmpty())
+        assertEquals(null, viewModel.state.value.picker)
+        assertEquals("Added to Play Sift picks", viewModel.state.value.confirmation)
+    }
+
+    @Test
+    fun aSongPickedByHandLeavesNotFoundIsMarkedAsAddedByHandAndNeverOfferedForTheTrash() = runTest(dispatcher) {
+        val viewModel = showPickerFor(lostSong, savedSend(added = listOf(matchedSong(1, "One")), notFound = listOf(lostSong, songTrack(4))))
+
+        viewModel.pickOption(liveOption)
+        advanceUntilIdle()
+
+        val result = done(viewModel).result
+        assertEquals(listOf(4L), result.notFound.map { it.id })
+        assertEquals(listOf(false, true), result.added.map { it.wasConfirmedByUser })
+        assertEquals(listOf(1L), done(viewModel).offer.map { it.track.id })
+        assertEquals(result, store.saved.first()!!.result)
+    }
+
+    @Test
+    fun thePickedOptionIsCachedForTheNextRun() = runTest(dispatcher) {
+        val viewModel = showPickerFor(lostSong, savedSend(notFound = listOf(lostSong)))
+
+        viewModel.pickOption(liveOption)
+        advanceUntilIdle()
+
+        val cached = dao.allMatches().single()
+        assertEquals(liveOption.uri, cached.spotifyUri)
+        assertTrue(cached.isConfirmedByUser)
+    }
+
+    @Test
+    fun pickingAnUnsureSongTakesItOffTheUnsureListAndAppends() = runTest(dispatcher) {
+        val unsure = UnsureSong(lostSong, spotifyTrack("Lost", durationMillis = 90_000))
+        val other = unsureSong(5, "Other")
+        val viewModel = showPickerFor(lostSong, savedSend(added = listOf(matchedSong(1, "One")), unsure = listOf(unsure, other)))
+
+        viewModel.pickOption(studioOption)
+        advanceUntilIdle()
+
+        assertEquals(listOf(5L), done(viewModel).unsure.map { it.track.id })
+        assertEquals(listOf("playlist-1" to listOf(studioOption.uri)), api.addCalls)
+        assertTrue(api.replaceCalls.isEmpty())
+    }
+
+    @Test
+    fun pickingForTheLastUnsureSongPublishesEarlierConfirmationsToo() = runTest(dispatcher) {
+        val unsure = UnsureSong(lostSong, spotifyTrack("Lost", durationMillis = 90_000))
+        val viewModel = showPickerFor(lostSong, savedSend(added = listOf(matchedSong(1, "One"), matchedSong(2, "Two", confirmed = true)), unsure = listOf(unsure)))
+
+        viewModel.pickOption(studioOption)
+        advanceUntilIdle()
+
+        assertEquals(listOf("spotify:track:One", "spotify:track:Two", studioOption.uri), api.replaceCalls.single().second)
+    }
+
+    @Test
+    fun pickingWhenNoPlaylistExistsYetMakesIt() = runTest(dispatcher) {
+        val unsure = UnsureSong(lostSong, spotifyTrack("Lost", durationMillis = 90_000))
+        val viewModel = showPickerFor(lostSong, savedSend(unsure = listOf(unsure, unsureSong(5, "Other")), playlist = null))
+
+        viewModel.pickOption(studioOption)
+        advanceUntilIdle()
+
+        assertEquals(listOf(studioOption.uri), api.replaceCalls.single().second)
+        assertEquals("playlist-1", done(viewModel).result.playlist!!.id)
+    }
+
+    @Test
+    fun closingThePickerLeavesTheSongWhereItWas() = runTest(dispatcher) {
+        val viewModel = showPickerFor(lostSong, savedSend(notFound = listOf(lostSong)))
+
+        viewModel.closePicker()
+        advanceUntilIdle()
+
+        assertEquals(null, viewModel.state.value.picker)
+        assertEquals(listOf(3L), done(viewModel).result.notFound.map { it.id })
+        assertTrue(api.addCalls.isEmpty())
+    }
+
+    @Test
+    fun aFailedSearchShowsAMessageInThePicker() = runTest(dispatcher) {
+        store.save(savedSend(notFound = listOf(lostSong)))
+        val viewModel = viewModel()
+        advanceUntilIdle()
+        api.failure = SpotifyHttpException(429, "slow down")
+
+        viewModel.openPicker(lostSong)
+        advanceUntilIdle()
+
+        val picker = viewModel.state.value.picker!!
+        assertEquals("Spotify is busy right now. Try again in a minute.", picker.errorMessage)
+        assertTrue(picker.options.isEmpty())
+    }
+
+    @Test
+    fun aRejectedTokenWhileAddingKeepsTheSongListedAndTheSheetOpen() = runTest(dispatcher) {
+        store.save(savedSend(added = listOf(matchedSong(1, "One")), notFound = listOf(lostSong)))
+        val rejectingApi = object : SpotifyApi by api {
+            override suspend fun addItems(playlistId: String, uris: List<String>) = throw SpotifyHttpException(401, "rejected")
+        }
+        val viewModel = viewModel(spotifyApi = rejectingApi)
+        advanceUntilIdle()
+        viewModel.openPicker(lostSong)
+        advanceUntilIdle()
+
+        viewModel.pickOption(liveOption)
+        advanceUntilIdle()
+
+        assertEquals(listOf(3L), done(viewModel).result.notFound.map { it.id })
+        assertTrue(viewModel.state.value.picker!!.errorMessage!!.startsWith("Spotify no longer accepts"))
+        assertTrue(dao.allMatches().isEmpty())
     }
 }

@@ -242,6 +242,9 @@ fun PlaySiftApp(viewModel: LibraryViewModel, spotifyViewModel: SpotifyViewModel)
         onBackToSetup = spotifyViewModel::backToSetup,
         onSearchOnSpotify = searchOnSpotify,
         onShareNotFound = shareNotFound,
+        onOpenPicker = spotifyViewModel::openPicker,
+        onPickOption = spotifyViewModel::pickOption,
+        onClosePicker = spotifyViewModel::closePicker,
     )
 
     val fileAccessLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->

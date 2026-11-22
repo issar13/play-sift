@@ -18,7 +18,10 @@ import app.playsift.spotify.SendResult
 import app.playsift.spotify.SourceChoice
 import app.playsift.spotify.SpotifyPlaylist
 import app.playsift.spotify.songTrack
+import app.playsift.spotify.PickerState
 import app.playsift.spotify.SpotifyStage
+import app.playsift.spotify.SpotifyTrack
+import app.playsift.spotify.spotifyTrack
 import app.playsift.spotify.SpotifyUiState
 import app.playsift.spotify.topCountTextFrom
 import org.junit.Assert.assertEquals
@@ -49,12 +52,16 @@ class SpotifyScreenTest {
         onUseAllPlayedCount: () -> Unit = {},
         onSearchOnSpotify: (PlayerTrack) -> Unit = {},
         onShareNotFound: (List<PlayerTrack>) -> Unit = {},
+        onOpenPicker: (PlayerTrack) -> Unit = {},
+        onPickOption: (SpotifyTrack) -> Unit = {},
+        onClosePicker: () -> Unit = {},
     ) = SpotifyActions(
         onSignIn = {}, onSignOut = {}, onClientIdChange = {}, onChooseSource = {},
         onTopCountTextChange = onTopCountTextChange, onUseAllPlayedCount = onUseAllPlayedCount,
         onPlaylistNameChange = {}, onSend = {}, onCancelSend = {}, onConfirmUnsure = {}, onSkipUnsure = {},
         onOpenPlaylist = {}, onToggleOffered = {}, onSelectAllOffered = {}, onMoveToTrash = {}, onBackToSetup = {},
         onSearchOnSpotify = onSearchOnSpotify, onShareNotFound = onShareNotFound,
+        onOpenPicker = onOpenPicker, onPickOption = onPickOption, onClosePicker = onClosePicker,
     )
 
     private fun showSetup(initial: SpotifyUiState = setupState, allPlayedCount: Int = 321) = composeRule.setContent {
@@ -109,7 +116,11 @@ class SpotifyScreenTest {
 
     private val notFoundSong = songTrack(7, title = "Lost Song", artist = "Lost Artist")
 
-    private fun showDone(onSearchOnSpotify: (PlayerTrack) -> Unit = {}, onShareNotFound: (List<PlayerTrack>) -> Unit = {}) = composeRule.setContent {
+    private fun showDone(
+        onSearchOnSpotify: (PlayerTrack) -> Unit = {},
+        onShareNotFound: (List<PlayerTrack>) -> Unit = {},
+        onOpenPicker: (PlayerTrack) -> Unit = {},
+    ) = composeRule.setContent {
         val result = SendResult(
             playlist = SpotifyPlaylist("p1", "https://open.spotify.com/playlist/p1"),
             added = emptyList(),
@@ -119,7 +130,7 @@ class SpotifyScreenTest {
         SpotifyScreen(
             state = setupState.copy(stage = SpotifyStage.Done(result, unsure = emptyList(), offer = emptyList(), selectedIds = emptySet())),
             isPreparingTrash = false,
-            actions = actions(onSearchOnSpotify = onSearchOnSpotify, onShareNotFound = onShareNotFound),
+            actions = actions(onSearchOnSpotify = onSearchOnSpotify, onShareNotFound = onShareNotFound, onOpenPicker = onOpenPicker),
         )
     }
 
@@ -135,16 +146,81 @@ class SpotifyScreenTest {
     }
 
     @Test
-    fun eachNotFoundSongCanBeSearchedAndTheListShared() {
-        var searched: PlayerTrack? = null
+    fun theNotFoundListCanBeShared() {
         var shared: List<PlayerTrack>? = null
-        showDone(onSearchOnSpotify = { searched = it }, onShareNotFound = { shared = it })
+        showDone(onShareNotFound = { shared = it })
 
         composeRule.onNodeWithText("Not found (1)").performClick()
-        composeRule.onNodeWithText("Search on Spotify").performClick()
         composeRule.onNodeWithText("Share list").performClick()
 
-        assertEquals(notFoundSong, searched)
         assertEquals(listOf(notFoundSong), shared)
+    }
+
+    @Test
+    fun tappingANotFoundSongOpensThePicker() {
+        var opened: PlayerTrack? = null
+        showDone(onOpenPicker = { opened = it })
+
+        composeRule.onNodeWithText("Not found (1)").performClick()
+        composeRule.onNodeWithText("Lost Song").performClick()
+
+        assertEquals(notFoundSong, opened)
+    }
+
+    private fun showPicker(
+        picker: PickerState,
+        onPickOption: (SpotifyTrack) -> Unit = {},
+        onClosePicker: () -> Unit = {},
+        onSearchOnSpotify: (PlayerTrack) -> Unit = {},
+    ) = composeRule.setContent {
+        val result = SendResult(null, added = emptyList(), skippedUnsure = emptyList(), notFound = listOf(notFoundSong))
+        SpotifyScreen(
+            state = setupState.copy(stage = SpotifyStage.Done(result, unsure = emptyList(), offer = emptyList(), selectedIds = emptySet()), picker = picker),
+            isPreparingTrash = false,
+            actions = actions(onPickOption = onPickOption, onClosePicker = onClosePicker, onSearchOnSpotify = onSearchOnSpotify),
+        )
+    }
+
+    private val liveOption = spotifyTrack("Lost Song - Live", artist = "Lost Artist", durationMillis = 272_000, album = "Live Album")
+    private val studioOption = spotifyTrack("Lost Song", artist = "Lost Artist", durationMillis = 200_000, album = "Studio Album")
+
+    @Test
+    fun thePickerShowsTitleArtistAlbumLengthAndALengthHint() {
+        showPicker(PickerState(notFoundSong.copy(durationMillis = 200_000), listOf(liveOption, studioOption), isLoading = false))
+
+        composeRule.onNodeWithText("Lost Song - Live").assertIsDisplayed()
+        composeRule.onNodeWithText("Lost Artist - Live Album").assertIsDisplayed()
+        composeRule.onNodeWithText("4:32  1:12 longer").assertIsDisplayed()
+        composeRule.onNodeWithText("3:20").assertIsDisplayed()
+    }
+
+    @Test
+    fun tappingAnOptionAddsIt() {
+        var picked: SpotifyTrack? = null
+        showPicker(PickerState(notFoundSong, listOf(liveOption, studioOption), isLoading = false), onPickOption = { picked = it })
+
+        composeRule.onNodeWithText("Lost Song - Live").performClick()
+
+        assertEquals(liveOption, picked)
+    }
+
+    @Test
+    fun noneOfTheseClosesAndTheSearchLinkStaysAvailable() {
+        var isClosed = false
+        var searched: PlayerTrack? = null
+        showPicker(PickerState(notFoundSong, listOf(studioOption), isLoading = false), onClosePicker = { isClosed = true }, onSearchOnSpotify = { searched = it })
+
+        composeRule.onNodeWithText("Open search in Spotify").performClick()
+        composeRule.onNodeWithText("None of these").performClick()
+
+        assertEquals(notFoundSong, searched)
+        assertEquals(true, isClosed)
+    }
+
+    @Test
+    fun aFailedSearchShowsItsMessageInThePicker() {
+        showPicker(PickerState(notFoundSong, isLoading = false, errorMessage = "Spotify is busy right now. Try again in a minute."))
+
+        composeRule.onNodeWithText("Spotify is busy right now. Try again in a minute.").assertIsDisplayed()
     }
 }

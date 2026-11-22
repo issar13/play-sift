@@ -1,6 +1,14 @@
 package app.playsift.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
+import app.playsift.spotify.PickerState
+import app.playsift.spotify.SpotifyTrack
+import app.playsift.spotify.lengthHint
+import app.playsift.spotify.lengthText
 import androidx.compose.material3.FilterChip
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -68,6 +76,9 @@ class SpotifyActions(
     val onBackToSetup: () -> Unit,
     val onSearchOnSpotify: (PlayerTrack) -> Unit,
     val onShareNotFound: (List<PlayerTrack>) -> Unit,
+    val onOpenPicker: (PlayerTrack) -> Unit,
+    val onPickOption: (SpotifyTrack) -> Unit,
+    val onClosePicker: () -> Unit,
 )
 
 @Composable
@@ -79,6 +90,7 @@ fun SpotifyScreen(state: SpotifyUiState, isPreparingTrash: Boolean, actions: Spo
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             state.message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            state.confirmation?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
             if (!state.isSignedIn) {
                 SignInSection(state, actions)
             } else {
@@ -86,6 +98,7 @@ fun SpotifyScreen(state: SpotifyUiState, isPreparingTrash: Boolean, actions: Spo
             }
         }
     }
+    state.picker?.let { picker -> PickerSheet(picker, actions) }
 }
 
 @Composable
@@ -233,6 +246,7 @@ private fun UnsureSection(unsure: UnsureSong, remaining: Int, actions: SpotifyAc
         Button(onClick = actions.onConfirmUnsure) { Text("Add it") }
         OutlinedButton(onClick = actions.onSkipUnsure) { Text("Skip") }
     }
+    TextButton(onClick = { actions.onOpenPicker(unsure.track) }) { Text("See more options") }
 }
 
 @Composable
@@ -268,7 +282,7 @@ private fun NotFoundSection(notFound: List<PlayerTrack>, actions: SpotifyActions
 @Composable
 private fun NotFoundRow(track: PlayerTrack, actions: SpotifyActions) {
     Row(
-        modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(vertical = 8.dp),
+        modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp).clickable { actions.onOpenPicker(track) }.padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -283,7 +297,46 @@ private fun NotFoundRow(track: PlayerTrack, actions: SpotifyActions) {
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        TextButton(onClick = { actions.onSearchOnSpotify(track) }) { Text("Search on Spotify") }
+        Text("Find a match", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+    }
+}
+
+/** Up to eight Spotify tracks for one song; tapping one adds it to the playlist. Closing leaves the song where it was. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PickerSheet(picker: PickerState, actions: SpotifyActions) {
+    ModalBottomSheet(onDismissRequest = actions.onClosePicker, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        Column(
+            modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("Pick the right song", style = MaterialTheme.typography.titleLarge)
+            Text("Yours: ${picker.track.title} by ${picker.track.artist} (${lengthText(picker.track.durationMillis)})", style = MaterialTheme.typography.bodyMedium)
+            picker.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            if (picker.isLoading) CircularProgressIndicator()
+            if (!picker.isLoading && picker.errorMessage == null && picker.options.isEmpty()) Text("Spotify has nothing close to this song.")
+            picker.options.forEach { option -> PickerOption(option, picker.track, actions) }
+            OutlinedButton(onClick = actions.onClosePicker, modifier = Modifier.fillMaxWidth()) { Text("None of these") }
+            TextButton(onClick = { actions.onSearchOnSpotify(picker.track) }) { Text("Open search in Spotify") }
+        }
+    }
+}
+
+@Composable
+private fun PickerOption(option: SpotifyTrack, local: PlayerTrack, actions: SpotifyActions) {
+    val hint = lengthHint(local.durationMillis, option.durationMillis)
+    Column(modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable { actions.onPickOption(option) }.padding(vertical = 8.dp)) {
+        Text(option.title, style = MaterialTheme.typography.bodyLarge)
+        Text(
+            listOf(option.artists.joinToString(", "), option.album).filter { it.isNotBlank() }.joinToString(" - "),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            listOfNotNull(lengthText(option.durationMillis), hint).joinToString("  "),
+            style = MaterialTheme.typography.bodySmall,
+            color = if (hint == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
+        )
     }
 }
 

@@ -57,6 +57,28 @@ class SpotifyApiTest {
     }
 
     @Test
+    fun optionSearchSendsTheQueryAsGivenAndReadsTheAlbum() = runTest {
+        server.enqueue(reply(200, """{"tracks":{"items":[{"uri":"spotify:track:1","name":"Halo","duration_ms":261000,"artists":[{"name":"Beyonce"}],"album":{"name":"I Am"}}]}}"""))
+
+        val results = api.searchOptions("Halo Beyonce")
+
+        val request = server.takeRequest()
+        assertEquals("Halo Beyonce", request.url.queryParameter("q"))
+        assertEquals("8", request.url.queryParameter("limit"))
+        assertEquals(listOf(SpotifyTrack("spotify:track:1", "Halo", listOf("Beyonce"), 261_000, album = "I Am")), results)
+        assertEquals("1", results.single().id)
+    }
+
+    @Test
+    fun optionSearchRefreshesTheTokenAfterA401() = runTest {
+        server.enqueue(reply(401))
+        server.enqueue(reply(200, """{"tracks":{"items":[]}}"""))
+
+        assertEquals(emptyList<SpotifyTrack>(), api.searchOptions("Halo"))
+        assertEquals(2, server.requestCount)
+    }
+
+    @Test
     fun aTooManyRequestsAnswerWaitsForRetryAfterThenSucceeds() = runTest {
         server.enqueue(reply(429, retryAfter = "3"))
         server.enqueue(reply(200, """{"tracks":{"items":[]}}"""))

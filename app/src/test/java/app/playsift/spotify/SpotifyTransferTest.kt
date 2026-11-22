@@ -96,6 +96,20 @@ class SpotifyTransferTest {
     }
 
     @Test
+    fun aSongPickedByHandIsCachedAndReusedWithoutSearching() = runTest {
+        val matcher = SongMatcher(api, dao, clock)
+        val song = songTrack(1, title = "Lost")
+        val picked = spotifyTrack("Lost - Live", uri = "spotify:track:live")
+
+        matcher.confirm(UnsureSong(song, picked))
+        val report = matcher.match(listOf(song), onProgress = { _, _ -> })
+
+        assertEquals(listOf(MatchedSong(song, "spotify:track:live", wasConfirmedByUser = true)), report.matched)
+        assertTrue(api.searchedTitles.isEmpty())
+        assertTrue(trashOffer(SendResult(null, report.matched, emptyList(), emptyList())).isEmpty())
+    }
+
+    @Test
     fun cueTracksSharingOneFileAreCachedSeparately() = runTest {
         api.catalogue = mapOf("First" to listOf(spotifyTrack("First")), "Second" to listOf(spotifyTrack("Second")))
         val firstCue = songTrack(1, title = "First", fileName = "album.flac").copy(isCueTrack = true)

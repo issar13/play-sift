@@ -25,6 +25,14 @@ sealed interface SpotifyStage {
     data class Failed(val message: String) : SpotifyStage
 }
 
+/** The "pick from options" sheet for [track]: loading, then [options] or an [errorMessage]. */
+data class PickerState(
+    val track: PlayerTrack,
+    val options: List<SpotifyTrack> = emptyList(),
+    val isLoading: Boolean = true,
+    val errorMessage: String? = null,
+)
+
 data class SpotifyUiState(
     val builtInClientIdMissing: Boolean,
     val clientIdOverride: String,
@@ -37,6 +45,9 @@ data class SpotifyUiState(
     val tickedTracks: List<PlayerTrack>,
     val stage: SpotifyStage,
     val message: String? = null,
+    /** A short good-news line, such as "Added to Play Sift top 200". */
+    val confirmation: String? = null,
+    val picker: PickerState? = null,
 ) {
     val hasClientId: Boolean get() = !builtInClientIdMissing || clientIdOverride.isNotBlank()
 

@@ -45,6 +45,7 @@ class SpotifyViewModel(
     val state: StateFlow<SpotifyUiState> = mutableState
 
     private val decisionLock = Mutex()
+    private val optionSearch = OptionSearch(api)
 
     init {
         viewModelScope.launch {
@@ -134,6 +135,7 @@ class SpotifyViewModel(
 
     /** Forgets the last result (and any unsure songs still waiting) so the setup form shows again. */
     fun backToSetup() {
+        mutableState.update { it.copy(picker = null, confirmation = null) }
         viewModelScope.launch { store.clearSaved() }
     }
 
@@ -165,6 +167,73 @@ class SpotifyViewModel(
         resolveFirstUnsure { saved, unsure ->
             saved.copy(result = saved.result.copy(skippedUnsure = saved.result.skippedUnsure + unsure), unsure = saved.unsure.drop(1))
         }
+
+    /** Opens the picker for a not-found or unsure song and looks up its Spotify options. */
+    fun openPicker(track: PlayerTrack) {
+        mutableState.update { it.copy(picker = PickerState(track), confirmation = null) }
+        viewModelScope.launch {
+            val loaded = loadedPicker(track)
+            mutableState.update { current -> if (current.picker?.track == track) current.copy(picker = loaded) else current }
+        }
+    }
+
+    /** "None of these": the song stays where it was. */
+    fun closePicker() = mutableState.update { it.copy(picker = null) }
+
+    /** Adds [option] to the playlist now, marks the song as added by hand, remembers the choice and takes the song off its list. */
+    fun pickOption(option: SpotifyTrack) {
+        viewModelScope.launch {
+            decisionLock.withLock {
+                val track = mutableState.value.picker?.track ?: return@launch
+                val saved = store.saved.first() ?: return@launch
+                try {
+                    store.save(addedByHand(saved, track, option))
+                    mutableState.update { it.copy(picker = null, confirmation = "Added to ${saved.playlistName}") }
+                } catch (exception: CancellationException) {
+                    throw exception
+                } catch (exception: Exception) {
+                    mutableState.update { it.copy(picker = it.picker?.copy(errorMessage = failureText(exception))) }
+                }
+            }
+        }
+    }
+
+    private suspend fun loadedPicker(track: PlayerTrack): PickerState =
+        try {
+            PickerState(track, options = optionSearch.optionsFor(track), isLoading = false)
+        } catch (exception: CancellationException) {
+            throw exception
+        } catch (exception: Exception) {
+            PickerState(track, isLoading = false, errorMessage = failureText(exception))
+        }
+
+    private suspend fun addedByHand(saved: SavedSend, track: PlayerTrack, option: SpotifyTrack): SavedSend {
+        val wasUnsure = saved.unsure.any { it.track == track }
+        val withPick = withPickedSong(saved, MatchedSong(track, option.uri, wasConfirmedByUser = true))
+        val updated = when {
+            wasUnsure && withPick.unsure.isEmpty() -> updatePlaylistWhenSettled(withPick)
+            else -> withPick.copy(result = withPick.result.copy(playlist = appendedPlaylist(saved, option.uri)))
+        }
+        matcher.confirm(UnsureSong(track, option))
+        return updated
+    }
+
+    private fun withPickedSong(saved: SavedSend, picked: MatchedSong): SavedSend =
+        saved.copy(
+            result = saved.result.copy(added = saved.result.added + picked, notFound = saved.result.notFound.filterNot { it == picked.track }),
+            unsure = saved.unsure.filterNot { it.track == picked.track },
+        )
+
+    /** Appends [uri] to the playlist, or makes the playlist when there is none yet. Never replaces what is there. */
+    private suspend fun appendedPlaylist(saved: SavedSend, uri: String): SpotifyPlaylist {
+        val existing = saved.result.playlist
+        val knownUris = uniqueUris(saved.result.added)
+        return when {
+            existing == null -> publisher.publish(saved.source, saved.playlistName, (knownUris + uri).distinct())
+            uri in knownUris -> existing
+            else -> existing.also { api.addItems(it.id, listOf(uri)) }
+        }
+    }
 
     fun toggleOffered(trackId: Long) = updateDone { done ->
         done.copy(selectedIds = if (trackId in done.selectedIds) done.selectedIds - trackId else done.selectedIds + trackId)

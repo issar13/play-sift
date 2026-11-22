@@ -15,7 +15,17 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
 @Serializable
-data class SpotifyTrack(val uri: String, val title: String, val artists: List<String>, val durationMillis: Long)
+data class SpotifyTrack(
+    val uri: String,
+    val title: String,
+    val artists: List<String>,
+    val durationMillis: Long,
+    /** Empty for a song saved before albums were read. */
+    val album: String = "",
+) {
+    /** Spotify's track id, the last part of the uri; the same song listed twice has the same id. */
+    val id: String get() = uri.substringAfterLast(':')
+}
 
 @Serializable
 data class SpotifyPlaylist(val id: String, val url: String)
@@ -28,6 +38,9 @@ const val PLAYLIST_BATCH_SIZE = 100
 
 interface SpotifyApi {
     suspend fun searchTracks(title: String, artist: String): List<SpotifyTrack>
+
+    /** Spotify's answer to a free-form search [query], at most [OPTION_SEARCH_LIMIT] tracks in Spotify's ranking order. */
+    suspend fun searchOptions(query: String): List<SpotifyTrack>
 
     suspend fun currentUserName(): String
 
@@ -42,6 +55,9 @@ interface SpotifyApi {
 
 private const val API_URL = "https://api.spotify.com/v1/"
 private const val SEARCH_RESULT_LIMIT = 5
+
+/** How many tracks one search for options asks for. */
+const val OPTION_SEARCH_LIMIT = 8
 private const val MAX_RATE_LIMIT_RETRIES = 5
 private const val DEFAULT_RETRY_SECONDS = 1L
 private const val LONGEST_WAIT_SECONDS = 120L
@@ -53,7 +69,16 @@ private data class SearchResponse(val tracks: TrackPage)
 private data class TrackPage(val items: List<TrackDto>)
 
 @Serializable
-private data class TrackDto(val uri: String, val name: String, @SerialName("duration_ms") val durationMillis: Long, val artists: List<ArtistDto>)
+private data class TrackDto(
+    val uri: String,
+    val name: String,
+    @SerialName("duration_ms") val durationMillis: Long,
+    val artists: List<ArtistDto>,
+    val album: AlbumDto? = null,
+)
+
+@Serializable
+private data class AlbumDto(val name: String)
 
 @Serializable
 private data class ArtistDto(val name: String)
@@ -89,15 +114,20 @@ class OkHttpSpotifyApi(
 ) : SpotifyApi {
     private val json = Json { ignoreUnknownKeys = true }
 
-    override suspend fun searchTracks(title: String, artist: String): List<SpotifyTrack> {
+    override suspend fun searchTracks(title: String, artist: String): List<SpotifyTrack> =
+        search(strictQuery(title, artist), SEARCH_RESULT_LIMIT)
+
+    override suspend fun searchOptions(query: String): List<SpotifyTrack> = search(query, OPTION_SEARCH_LIMIT)
+
+    private suspend fun search(query: String, limit: Int): List<SpotifyTrack> {
         val url = baseUrl.newBuilder()
             .addPathSegment("search")
-            .addQueryParameter("q", "track:\"${title.withoutQuotes()}\" artist:\"${artist.withoutQuotes()}\"")
+            .addQueryParameter("q", query)
             .addQueryParameter("type", "track")
-            .addQueryParameter("limit", SEARCH_RESULT_LIMIT.toString())
+            .addQueryParameter("limit", limit.toString())
             .build()
         return json.decodeFromString<SearchResponse>(execute(RequestSpec("GET", url, null))).tracks.items.map { track ->
-            SpotifyTrack(track.uri, track.name, track.artists.map { it.name }, track.durationMillis)
+            SpotifyTrack(track.uri, track.name, track.artists.map { it.name }, track.durationMillis, track.album?.name.orEmpty())
         }
     }
 
@@ -123,8 +153,6 @@ class OkHttpSpotifyApi(
 
     private fun itemsUrl(playlistId: String) =
         baseUrl.newBuilder().addPathSegment("playlists").addPathSegment(playlistId).addPathSegment("items").build()
-
-    private fun String.withoutQuotes() = replace("\"", "")
 
     private suspend fun execute(spec: RequestSpec): String =
         attempt(spec, tokens.current(), rateLimitRetries = 0, hasRefreshedToken = false)
