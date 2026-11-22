@@ -83,7 +83,7 @@ fun HomeScreen(
             SummaryCard(
                 title = "Delete candidates",
                 value = summary.deleteCandidates.toString(),
-                detail = summary.deleteCandidatesSizeBytes?.let { sizeBytes -> "${megabytesText(sizeBytes)} in known files" },
+                detail = summary.deleteCandidatesSizeBytes?.let { sizeBytes -> "${storageText(sizeBytes)} in known files" },
                 containerColor = MaterialTheme.colorScheme.errorContainer,
                 contentColor = MaterialTheme.colorScheme.onErrorContainer,
                 testTag = "deleteCard",
@@ -91,9 +91,9 @@ fun HomeScreen(
                 onClick = onOpenDelete,
             )
             SummaryCard(
-                title = "Large songs 5 MB+",
+                title = "Large songs 10 MB+",
                 value = summary.largeSongs?.toString() ?: if (state.hasFileAccess) "Sizes unavailable" else "Allow file access",
-                detail = summary.largeSongsSizeBytes?.let(::megabytesText),
+                detail = summary.largeSongsSizeBytes?.let(::storageText),
                 containerColor = MaterialTheme.colorScheme.surfaceVariant,
                 contentColor = MaterialTheme.colorScheme.onSurface,
                 testTag = "largeCard",
@@ -117,7 +117,7 @@ private fun HeaderBand(summary: HomeSummary) {
             )
             summary.librarySizeBytes?.let { librarySizeBytes ->
                 Text(
-                    text = "${megabytesText(librarySizeBytes)} in known files",
+                    text = "${storageText(librarySizeBytes)} in known files",
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

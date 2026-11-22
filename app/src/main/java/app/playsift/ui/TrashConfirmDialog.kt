@@ -25,7 +25,7 @@ fun TrashConfirmDialog(
     onDismiss: () -> Unit,
 ) {
     val songCount = plan.removable.size
-    val sizeText = megabytesText(plan.totalSizeBytes)
+    val sizeText = storageText(plan.totalSizeBytes)
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = {

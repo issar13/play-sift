@@ -10,7 +10,7 @@ The **Home** tab is the start screen. It shows:
 
 - how many songs you have and how much space they take
 - a bar showing played vs never played
-- cards for **Played**, **Never played**, **Delete candidates** and **Large songs (5 MB+)**; tap a card to open its list
+- cards for **Played**, **Never played**, **Delete candidates** and **Large songs (10 MB+)**; tap a card to open its list
 - highlights: your most played song, your top artist and how far back your play history goes
 
 ### Lists
@@ -18,7 +18,7 @@ The **Home** tab is the start screen. It shows:
 - **Most played**: songs ranked by play count. When 6 or more songs share the same count, they sit under one header such as "12 plays · 7 songs", collapsed until you tap it.
 - **Never played**: songs with zero plays, oldest first.
 - **Delete candidates**: songs that have never been played and have been in your library longer than a cutoff you choose (6 months, 1 year or 2 years).
-- **Large songs**: songs of 5 MB or more, with size and play count on each row ("8.4 MB · 12 plays"), fewest plays first, so big files you never listen to lead the list.
+- **Large songs**: songs of 10 MB or more, with size and play count on each row ("14.2 MB · 12 plays"), fewest plays first, so big files you never listen to lead the list.
 
 ### Keep your play history
 

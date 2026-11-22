@@ -28,17 +28,17 @@ class HomeSummaryTest {
             mostPlayed = listOf(track(1, playCount = 9)),
             deleteCandidates = listOf(allTracks[1], allTracks[2]),
             allTracks = allTracks,
-            sizes = mapOf(location(1) to 1_000L, location(2) to 6_000_000L, location(3) to 7_000_000L, location(4) to 2_000L),
+            sizes = mapOf(location(1) to 1_000L, location(2) to 12_000_000L, location(3) to 14_000_000L, location(4) to 2_000L),
         )
 
         assertEquals(10, summary.totalSongs)
         assertEquals(6, summary.playedSongs)
         assertEquals(4, summary.neverPlayedSongs)
         assertEquals(2, summary.deleteCandidates)
-        assertEquals(13_000_000L, summary.deleteCandidatesSizeBytes)
-        assertEquals(13_003_000L, summary.librarySizeBytes)
+        assertEquals(26_000_000L, summary.deleteCandidatesSizeBytes)
+        assertEquals(26_003_000L, summary.librarySizeBytes)
         assertEquals(2, summary.largeSongs)
-        assertEquals(13_000_000L, summary.largeSongsSizeBytes)
+        assertEquals(26_000_000L, summary.largeSongsSizeBytes)
         assertEquals(1L, summary.mostPlayed?.id)
         assertEquals(earliest, summary.trackingSince)
     }
@@ -79,19 +79,19 @@ class HomeSummaryTest {
     }
 
     @Test
-    fun largeSongsKeepsFiveMegabytesAndUpFewestPlaysFirstThenBiggest() {
+    fun largeSongsKeepsTenMegabytesAndUpFewestPlaysFirstThenBiggest() {
         val allTracks = listOf(track(1), track(2, playCount = 3), track(3, playCount = 3), track(5, playCount = 0))
         val sizes = mapOf(
-            location(1) to 4_999_999L,
-            location(2) to 5_000_000L,
-            location(3) to 9_000_000L,
-            location(5) to 6_000_000L,
+            location(1) to 9_999_999L,
+            location(2) to 10_000_000L,
+            location(3) to 18_000_000L,
+            location(5) to 12_000_000L,
         )
 
         val large = largeSongs(allTracks, sizes)
 
         assertEquals(
-            listOf(5L to 6_000_000L, 3L to 9_000_000L, 2L to 5_000_000L),
+            listOf(5L to 12_000_000L, 3L to 18_000_000L, 2L to 10_000_000L),
             large.map { (track, size) -> track.id to size },
         )
     }

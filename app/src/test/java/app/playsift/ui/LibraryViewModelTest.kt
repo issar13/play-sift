@@ -540,8 +540,8 @@ class LibraryViewModelTest {
     )
     private val largeSizes = mapOf(
         FileLocation("Music/", "small.mp3") to 1_000L,
-        FileLocation("Music/", "big.mp3") to 5_000_000L,
-        FileLocation("Music/", "huge.mp3") to 8_000_000L,
+        FileLocation("Music/", "big.mp3") to 10_000_000L,
+        FileLocation("Music/", "huge.mp3") to 16_000_000L,
     )
 
     @Test
@@ -675,7 +675,7 @@ class LibraryViewModelTest {
         val viewModel = viewModel(library = largeLibrary, fileSizes = FakeFileSizes(largeSizes), startScreen = Screen.Home)
         viewModel.setFileAccess(true)
         advanceUntilIdle()
-        assertEquals(13_001_000L, viewModel.state.value.home?.librarySizeBytes)
+        assertEquals(26_001_000L, viewModel.state.value.home?.librarySizeBytes)
         assertEquals(2, viewModel.state.value.home?.largeSongs)
         assertEquals(ArtistPlays("Star", 5), viewModel.state.value.home?.topArtist)
     }
@@ -714,7 +714,7 @@ class LibraryViewModelTest {
         viewModel.showScreen(Screen.Large)
         advanceUntilIdle()
         assertEquals(listOf(3L, 2L), viewModel.state.value.tracks.map { it.id })
-        assertEquals(mapOf(3L to 8_000_000L, 2L to 5_000_000L), viewModel.state.value.sizesById)
+        assertEquals(mapOf(3L to 16_000_000L, 2L to 10_000_000L), viewModel.state.value.sizesById)
         assertTrue(viewModel.state.value.selectedIds.isEmpty())
     }
 

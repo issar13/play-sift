@@ -36,7 +36,7 @@ fun LargeSongsScreen(
         if (state.sizesUnavailable) {
             Text("Sizes unavailable. Couldn't read your file sizes.", modifier = Modifier.padding(16.dp))
         } else if (state.tracks.isEmpty()) {
-            Text("No songs of 5 MB or more.", modifier = Modifier.padding(16.dp))
+            Text("No songs of 10 MB or more.", modifier = Modifier.padding(16.dp))
         }
         LazyColumn(modifier = Modifier.weight(1f)) {
             items(state.tracks, key = { track -> track.id }) { track ->
@@ -65,7 +65,7 @@ fun LargeSongsScreen(
                     if (isPreparingTrash) {
                         CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                     } else {
-                        Text("Move ${state.selectedIds.size} to trash (${megabytesText(selectedSizeBytes)})")
+                        Text("Move ${state.selectedIds.size} to trash (${storageText(selectedSizeBytes)})")
                     }
                 }
             }

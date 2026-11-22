@@ -87,7 +87,7 @@ class HomeScreenTest {
             PlaySiftTheme { HomeScreen(state = state(), onOpenDelete = {}, onOpenLarge = {}, onAllowFileAccess = {}) }
         }
         composeRule.onNodeWithText("120 songs").assertExists()
-        composeRule.onNodeWithText("1234.5 MB in known files").assertExists()
+        composeRule.onNodeWithText("1.2 GB in known files").assertExists()
         composeRule.onNodeWithText("80").assertExists()
         composeRule.onNodeWithText("40").assertExists()
         composeRule.onNodeWithText("12").assertExists()
@@ -137,7 +137,7 @@ class HomeScreenTest {
             }
         }
         composeRule.onNodeWithText("120 songs").assertExists()
-        composeRule.onNodeWithText("1234.5 MB in known files").assertDoesNotExist()
+        composeRule.onNodeWithText("1.2 GB in known files").assertDoesNotExist()
         composeRule.onNodeWithText("Allow file access").performClick()
         assertEquals(1, allowTapCount)
     }
@@ -241,6 +241,6 @@ class HomeScreenTest {
             }
         }
         composeRule.onNodeWithText("Sizes unavailable. Couldn't read your file sizes.").assertExists()
-        composeRule.onNodeWithText("No songs of 5 MB or more.").assertDoesNotExist()
+        composeRule.onNodeWithText("No songs of 10 MB or more.").assertDoesNotExist()
     }
 }

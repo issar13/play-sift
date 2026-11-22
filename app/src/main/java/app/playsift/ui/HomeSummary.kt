@@ -6,8 +6,8 @@ import app.playsift.player.HistorySummary
 import app.playsift.player.PlayerTrack
 import java.time.Instant
 
-/** 5 MB as the app shows it: 1 MB is 1,000,000 bytes. */
-const val LARGE_SONG_MINIMUM_BYTES = 5_000_000L
+/** 10 MB as the app shows it: 1 MB is 1,000,000 bytes. */
+const val LARGE_SONG_MINIMUM_BYTES = 10_000_000L
 
 data class ArtistPlays(val artist: String, val plays: Int)
 
