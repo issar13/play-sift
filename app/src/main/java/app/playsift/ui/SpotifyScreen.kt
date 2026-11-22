@@ -221,7 +221,7 @@ private fun PlayerPlaylistList(state: SpotifyUiState, actions: SpotifyActions) {
             state.playerPlaylistsError != null -> Text(state.playerPlaylistsError, color = MaterialTheme.colorScheme.error)
             state.playerPlaylists.isEmpty() -> Text("No playlists in your music player.", style = MaterialTheme.typography.bodySmall)
             else -> state.playerPlaylists.forEach { playlist ->
-                SourceRadio("${playlist.name} \u00B7 ${playlist.songCount} songs", state.selectedPlayerPlaylistId == playlist.id, true) {
+                SourceRadio("${playlist.name} \u00B7 ${playlist.songCount} ${if (playlist.songCount == 1) "song" else "songs"}", state.selectedPlayerPlaylistId == playlist.id, true) {
                     actions.onChoosePlayerPlaylist(playlist.id)
                 }
             }
