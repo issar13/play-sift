@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -12,10 +13,15 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
+import app.playsift.player.PlayerTrack
+import app.playsift.spotify.SendResult
 import app.playsift.spotify.SourceChoice
+import app.playsift.spotify.SpotifyPlaylist
+import app.playsift.spotify.songTrack
 import app.playsift.spotify.SpotifyStage
 import app.playsift.spotify.SpotifyUiState
 import app.playsift.spotify.topCountTextFrom
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -38,11 +44,17 @@ class SpotifyScreenTest {
         stage = SpotifyStage.Setup,
     )
 
-    private fun actions(onTopCountTextChange: (String) -> Unit = {}, onUseAllPlayedCount: () -> Unit = {}) = SpotifyActions(
+    private fun actions(
+        onTopCountTextChange: (String) -> Unit = {},
+        onUseAllPlayedCount: () -> Unit = {},
+        onSearchOnSpotify: (PlayerTrack) -> Unit = {},
+        onShareNotFound: (List<PlayerTrack>) -> Unit = {},
+    ) = SpotifyActions(
         onSignIn = {}, onSignOut = {}, onClientIdChange = {}, onChooseSource = {},
         onTopCountTextChange = onTopCountTextChange, onUseAllPlayedCount = onUseAllPlayedCount,
         onPlaylistNameChange = {}, onSend = {}, onCancelSend = {}, onConfirmUnsure = {}, onSkipUnsure = {},
         onOpenPlaylist = {}, onToggleOffered = {}, onSelectAllOffered = {}, onMoveToTrash = {}, onBackToSetup = {},
+        onSearchOnSpotify = onSearchOnSpotify, onShareNotFound = onShareNotFound,
     )
 
     private fun showSetup(initial: SpotifyUiState = setupState, allPlayedCount: Int = 321) = composeRule.setContent {
@@ -93,5 +105,46 @@ class SpotifyScreenTest {
         showSetup(setupState.copy(topCountText = "0"))
 
         composeRule.onNodeWithText("Create playlist").assertIsNotEnabled()
+    }
+
+    private val notFoundSong = songTrack(7, title = "Lost Song", artist = "Lost Artist")
+
+    private fun showDone(onSearchOnSpotify: (PlayerTrack) -> Unit = {}, onShareNotFound: (List<PlayerTrack>) -> Unit = {}) = composeRule.setContent {
+        val result = SendResult(
+            playlist = SpotifyPlaylist("p1", "https://open.spotify.com/playlist/p1"),
+            added = emptyList(),
+            skippedUnsure = emptyList(),
+            notFound = listOf(notFoundSong),
+        )
+        SpotifyScreen(
+            state = setupState.copy(stage = SpotifyStage.Done(result, unsure = emptyList(), offer = emptyList(), selectedIds = emptySet())),
+            isPreparingTrash = false,
+            actions = actions(onSearchOnSpotify = onSearchOnSpotify, onShareNotFound = onShareNotFound),
+        )
+    }
+
+    @Test
+    fun theNotFoundSectionIsCollapsedUntilTapped() {
+        showDone()
+
+        composeRule.onNodeWithText("Lost Song").assertDoesNotExist()
+        composeRule.onNodeWithText("Not found (1)").performClick()
+
+        composeRule.onNodeWithText("Lost Song").assertIsDisplayed()
+        composeRule.onNodeWithText("Lost Artist").assertIsDisplayed()
+    }
+
+    @Test
+    fun eachNotFoundSongCanBeSearchedAndTheListShared() {
+        var searched: PlayerTrack? = null
+        var shared: List<PlayerTrack>? = null
+        showDone(onSearchOnSpotify = { searched = it }, onShareNotFound = { shared = it })
+
+        composeRule.onNodeWithText("Not found (1)").performClick()
+        composeRule.onNodeWithText("Search on Spotify").performClick()
+        composeRule.onNodeWithText("Share list").performClick()
+
+        assertEquals(notFoundSong, searched)
+        assertEquals(listOf(notFoundSong), shared)
     }
 }

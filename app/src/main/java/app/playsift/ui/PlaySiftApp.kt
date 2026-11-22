@@ -57,6 +57,8 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import app.playsift.R
 import app.playsift.player.PlayerTrack
 import app.playsift.spotify.SpotifyViewModel
+import app.playsift.spotify.notFoundShareText
+import app.playsift.spotify.spotifySearchLinks
 import app.playsift.files.trashRequest
 import app.playsift.player.AccessState
 import java.time.LocalDate
@@ -199,6 +201,18 @@ fun PlaySiftApp(viewModel: LibraryViewModel, spotifyViewModel: SpotifyViewModel)
             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
         }
     }
+    val searchOnSpotify: (PlayerTrack) -> Unit = { track ->
+        val links = spotifySearchLinks(track)
+        try {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(links.appUri)).setPackage(SPOTIFY_PACKAGE_NAME))
+        } catch (_: ActivityNotFoundException) {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(links.webUrl)))
+        }
+    }
+    val shareNotFound: (List<PlayerTrack>) -> Unit = { tracks ->
+        val shareIntent = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, notFoundShareText(tracks))
+        context.startActivity(Intent.createChooser(shareIntent, "Share songs not found on Spotify"))
+    }
     val openSignInPage: (String) -> Unit = { url -> CustomTabsIntent.Builder().build().launchUrl(context, Uri.parse(url)) }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         // Denied or not, the send runs; without the permission Android only lists it in the task manager.
@@ -226,6 +240,8 @@ fun PlaySiftApp(viewModel: LibraryViewModel, spotifyViewModel: SpotifyViewModel)
         onSelectAllOffered = spotifyViewModel::selectAllOffered,
         onMoveToTrash = { selectedSongs -> moveToTrash(selectedSongs.map { it.track.id }.toSet(), selectedSongs.map { it.track }) },
         onBackToSetup = spotifyViewModel::backToSetup,
+        onSearchOnSpotify = searchOnSpotify,
+        onShareNotFound = shareNotFound,
     )
 
     val fileAccessLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->

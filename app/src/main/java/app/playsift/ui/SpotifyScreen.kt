@@ -11,6 +11,10 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.text.style.TextOverflow
+import app.playsift.player.PlayerTrack
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -62,6 +66,8 @@ class SpotifyActions(
     val onSelectAllOffered: () -> Unit,
     val onMoveToTrash: (List<OfferedSong>) -> Unit,
     val onBackToSetup: () -> Unit,
+    val onSearchOnSpotify: (PlayerTrack) -> Unit,
+    val onShareNotFound: (List<PlayerTrack>) -> Unit,
 )
 
 @Composable
@@ -237,11 +243,48 @@ private fun DoneSection(done: SpotifyStage.Done, isPreparingTrash: Boolean, acti
     Text("Matched: ${result.added.size - confirmedCount}")
     Text("Added after you confirmed: $confirmedCount")
     Text("Skipped as unsure: ${result.skippedUnsure.size}")
-    Text("Not found: ${result.notFound.size}")
+    if (result.notFound.isEmpty()) Text("Not found: 0") else NotFoundSection(result.notFound, actions)
     result.playlist?.let { playlist -> Button(onClick = { actions.onOpenPlaylist(playlist.url) }) { Text("Open in Spotify") } }
     done.unsure.firstOrNull()?.let { unsure -> UnsureSection(unsure, done.unsure.size, actions) }
     OfferSection(done, isPreparingTrash, actions)
     OutlinedButton(onClick = actions.onBackToSetup) { Text("Done") }
+}
+
+/** Songs Spotify did not have: collapsed by default, each with a way to search by hand, and one list to share. Never offered for the trash. */
+@Composable
+private fun NotFoundSection(notFound: List<PlayerTrack>, actions: SpotifyActions) {
+    var isExpanded by rememberSaveable { mutableStateOf(false) }
+    Column {
+        TextButton(onClick = { isExpanded = !isExpanded }) {
+            Text("Not found (${notFound.size})", style = MaterialTheme.typography.titleMedium)
+        }
+        if (isExpanded) {
+            OutlinedButton(onClick = { actions.onShareNotFound(notFound) }) { Text("Share list") }
+            notFound.forEach { track -> NotFoundRow(track, actions) }
+        }
+    }
+}
+
+@Composable
+private fun NotFoundRow(track: PlayerTrack, actions: SpotifyActions) {
+    Row(
+        modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        ArtworkTile(label = track.title, colorSeed = track.artist)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = track.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                text = track.artist,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        TextButton(onClick = { actions.onSearchOnSpotify(track) }) { Text("Search on Spotify") }
+    }
 }
 
 @Composable
